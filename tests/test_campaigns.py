@@ -237,3 +237,20 @@ def test_invalid_empty_message_removal_is_atomic(tmp_path):
         store.save(draft(text='',photo_action='remove'),draft_id=d['id'])
     assert store.row(d['id'])['photo']==image_bytes()
     store.db.close()
+
+
+def test_upload_failure_is_not_an_unknown_delivery(tmp_path):
+    from app.uploads import PhotoUploadError
+    async def scenario():
+        store = Store(tmp_path, Clock()); service = fake_service()
+        service.client.send_message.side_effect = PhotoUploadError('select_token')
+        saved = store.save(draft(chat_ids=[11], photo_action='replace'), make_photo(image_bytes()))
+        run_id = store.enqueue(saved['id'])
+        engine = Engine(service, store)
+        await engine.step(); await engine.step()
+        result = store.run_view(run_id)
+        assert result['deliveries'][0]['state'] == 'failed'
+        assert 'сообщение не отправлено' in result['deliveries'][0]['error']
+        service.client.send_message.assert_awaited_once()
+        store.db.close()
+    asyncio.run(scenario())

@@ -363,7 +363,7 @@ action('previewcron', async () => {
   $('cronpreview').textContent=data.upcoming.map(t=>inZone(t,data.timezone)).join(' · ')+' ('+data.timezone+')';
 });
 let runsBusy=false;
-const sendStates={queued:'В очереди',running:'Отправляется',completed:'Завершено',partial:'Есть неподтверждённые отправки',cancelled:'Отменено',pending:'Ожидает',sending:'Отправляется',sent:'Отправлено',unknown:'Результат неизвестен'};
+const sendStates={queued:'В очереди',running:'Отправляется',completed:'Завершено',partial:'Есть ошибки или неподтверждённые отправки',cancelled:'Отменено',pending:'Ожидает',sending:'Отправляется',sent:'Отправлено',failed:'Не отправлено',unknown:'Результат неизвестен'};
 async function loadRuns() {
   if (runsBusy) return;
   runsBusy=true;

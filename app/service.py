@@ -4,7 +4,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from pymax import ExtraConfig, QrAuthFlow, WebClient
+from pymax import ExtraConfig, QrAuthFlow
+from .uploads import CompatibleWebClient as WebClient
 from pymax.exceptions import ApiError
 from .encoding import wire
 from .diagnostics import emit, request_context

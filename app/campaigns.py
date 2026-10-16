@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pymax import Photo
 from .diagnostics import emit, request_context
+from .uploads import PhotoUploadError
 
 
 def next_occurrence(expression, timezone, after):
@@ -310,6 +311,9 @@ class Engine:
             except asyncio.CancelledError:
                 state, error = 'unknown', 'Остановка сервера во время отправки; результат неизвестен'
                 raise
+            except PhotoUploadError as exc:
+                emit(self.store.directory, 'campaign_upload_failed', 'ERROR', exception=exc, run_id=run['id'])
+                state, error = 'failed', 'Фото не загружено; сообщение не отправлено. Проверьте Логи. Автоматического повтора нет.'
             except Exception as exc:
                 emit(self.store.directory,'campaign_send_failed','ERROR',exception=exc,run_id=run['id'])
                 state, error = 'unknown', 'MAX не подтвердил результат; автоматического повтора нет'

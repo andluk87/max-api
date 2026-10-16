@@ -40,6 +40,9 @@ def emit(directory,event,level='INFO',exception=None,**fields):
     if exception is not None:
         record['exception_type']=type(exception).__name__
         record.update(upstream_error(exception))
+        stage = getattr(exception, 'upload_stage', None)
+        if stage in {'request_url', 'parse_url', 'read_photo', 'http_upload', 'http_status', 'decode_response', 'select_token'}:
+            record['upload_stage'] = stage
         # Only code locations, no exception values, source lines, locals or full paths.
         record['stack']=[{'file':Path(f.filename).name,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(exception.__traceback__)[-12:]]
     try:

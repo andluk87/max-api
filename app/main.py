@@ -12,6 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator, ValidationError
 
 from .service import Service
+from .uploads import PhotoUploadError
 from .diagnostics import emit, read as read_logs
 from typing import Literal
 from .encoding import wire
@@ -56,7 +57,7 @@ def create_app(service=None, api_key=None, run_scheduler=True, restore_session=T
             await s.stop()
             s.db.close()
 
-    app = FastAPI(title='MAX User Account API', version='1.11.1', lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title='MAX User Account API', version='1.11.2', lifespan=lifespan, docs_url=None, redoc_url=None)
 
     async def auth(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
         if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), key.encode()):
@@ -165,6 +166,9 @@ def create_app(service=None, api_key=None, run_scheduler=True, restore_session=T
                                                  timeout=120 if attachments else 30)
                 emit(s.directory,'direct_send_complete',state='sent')
                 return wire(message.model_dump(mode='python'))
+            except PhotoUploadError as exc:
+                emit(s.directory, 'direct_upload_failed', 'ERROR', exception=exc, state='failed')
+                raise HTTPException(502, 'Фото не загружено; сообщение не отправлено. Проверьте Логи.')
             except asyncio.TimeoutError as exc:
                 emit(s.directory,'direct_send_failed','ERROR',exception=exc,state='unknown')
                 raise HTTPException(504, 'Delivery unknown: do not automatically retry')

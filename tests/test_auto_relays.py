@@ -63,3 +63,25 @@ def test_legacy_migration_never_enables(tmp_path):
     assert a.get(rule['id'])['source_chat_ids']==['10']
     assert a.get(rule['id'])['enabled'] is False
     asyncio.run(a.close());s.db.close()
+
+
+@pytest.mark.parametrize('failure', ['not.found', 'upload'])
+def test_rejected_or_upload_failed_job_is_failed_without_retry(tmp_path, monkeypatch, failure):
+    from pymax.exceptions import ApiError
+    from app.uploads import PhotoUploadError
+    error = ApiError(opcode=64, error='not.found') if failure == 'not.found' else PhotoUploadError('select_token')
+    sender = AsyncMock(side_effect=error)
+    monkeypatch.setattr('app.auto_relays.send_forward', sender)
+    async def scenario():
+        service = Service(str(tmp_path)); service.ready = lambda: True
+        relays = AutoRelays(service)
+        relays.save(AutoRelay(title='forward', destination=30, source_chat_ids=[10], enabled=True, mode='forward'))
+        event(service, 1)
+        await relays.step()
+        job = relays.list()['jobs'][0]
+        assert job['state'] == 'failed'
+        assert ('not.found' if failure == 'not.found' else 'Фото не загружено') in job['error']
+        await relays.step()
+        sender.assert_awaited_once()
+        await relays.close(); service.db.close()
+    asyncio.run(scenario())

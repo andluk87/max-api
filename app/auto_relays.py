@@ -11,6 +11,7 @@ from pydantic import BaseModel,Field,model_validator
 from .relays import send_copy, send_forward, is_repost, DuplicateCopy
 from .message_links import web_message_link
 from .diagnostics import emit, request_context, upstream_error
+from .uploads import PhotoUploadError
 
 
 class AutoRelay(BaseModel):
@@ -136,11 +137,19 @@ class AutoRelays:
         except HTTPException as e:
             state='failed';error=str(e.detail)
             emit(self.service.directory,'relay_failed','ERROR',exception=e,operation=data.get('mode','copy'),rule_id=row['rule_id'],job_id=row['id'])
+        except PhotoUploadError as e:
+            state = 'failed'
+            error = 'Фото не загружено; сообщение не отправлено. Проверьте Логи. Автоматического повтора нет.'
+            emit(self.service.directory, 'relay_upload_failed', 'ERROR', exception=e, operation=data.get('mode','copy'), rule_id=row['rule_id'], job_id=row['id'])
         except asyncio.CancelledError:raise
         except Exception as e:
             code=upstream_error(e).get('max_error_code')
-            error=('MAX: '+code+'. ' if code else '')+'Результат неизвестен. Автоматического повтора нет.'
-            emit(self.service.directory,'relay_unknown','ERROR',exception=e,operation=data.get('mode','copy'),rule_id=row['rule_id'],job_id=row['id'])
+            if code == 'not.found' and getattr(e, 'opcode', None) == 64:
+                state = 'failed'
+                error = 'MAX: not.found. Сообщение или чат не найдены либо недоступны аккаунту. Проверьте исходное сообщение, чат назначения и права доступа. Автоматического повтора нет.'
+            else:
+                error=('MAX: '+code+'. ' if code else '')+'Результат неизвестен. Автоматического повтора нет.'
+            emit(self.service.directory,'relay_failed' if state == 'failed' else 'relay_unknown','ERROR',exception=e,operation=data.get('mode','copy'),rule_id=row['rule_id'],job_id=row['id'])
         finally:
             emit(self.service.directory,'relay_result',state=state,rule_id=row['rule_id'],job_id=row['id'])
             with self.db:
