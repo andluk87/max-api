@@ -1,0 +1,2806 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Wiki MAX Account API v1.11.0: GUI, Python, HTTPS, автоматизации и бот"><title>MAX API · Wiki v1.0.0</title><link rel="stylesheet" href="wiki.css"><script defer src="wiki.js"></script><script type="module" src="scene.js"></script></head><body><header><a class="brand" href="#">MAX / WIKI</a><span class="tag">API 1.11.0 · WIKI 1.0.0</span><input id="search" type="search" aria-label="Поиск в документации" placeholder="Поиск: QR, Python, cron…"><button id="print">Печать</button></header><div class="layout"><aside aria-label="Оглавление"><strong>Руководство разработчика</strong><a href="#section-1">01 · Что это за API</a><a href="#section-2">02 · Установка и первый вход</a><a href="#section-3">03 · Web GUI: все вкладки</a><a href="#section-4">04 · Договор HTTP API</a><a href="#section-5">05 · Python: подключение и QR</a><a href="#section-6">06 · Python: текст, фото и история</a><a href="#section-7">07 · Python: шаблоны, cron и пересылки</a><a href="#section-8">08 · Доступ со стороннего сервиса через интернет</a><a href="#section-9">09 · Пример бота команд</a><a href="#section-10">10 · Справочник маршрутов</a><a href="#section-11">11 · Ошибки и диагностика</a><a href="#section-12">12 · Обновление и резервная копия</a><a href="#section-13">13 · Файлы, проверка и источники</a><a href="#schema">14 · OpenAPI: поля запросов</a></aside><main><div class="hero"><div class="eyebrow">От первого QR до собственного бота</div><h1>Ваш аккаунт MAX.<br>Один HTTP API.</h1><p class="lead">Полное руководство: панель управления, Python, внешние сервисы и автоматизация.</p><div class="actions"><a href="#section-2">Начать установку ↗</a><a href="#section-9">Создать бота ↗</a><a href="WIKI.md" download>Markdown ↓</a><a href="examples/client.py" download>Python-клиент ↓</a><a href="examples/bot.py" download>Бот ↓</a></div><div class="scene-wrap"><div id="scene" aria-label="Интерактивная схема пути запроса"></div><div><div class="eyebrow">Как проходит запрос</div><p id="node-info"></p><div class="nodes"></div></div></div></div><p id="search-status" role="status"></p><section class="doc" id="overview">
+<p>Документация <strong>v1.0.0</strong> для сервера <strong>v1.11.0</strong>, Python 3.10 и Docker. Сверена с исходным кодом проекта 27 сентября 2026 года. Wiki — отдельный сайт на порту 8088; Web GUI и HTTP API работают на 8087.</p>
+</section><section class="doc" id="section-1"><h2>01 · Что это за API</h2>
+<p>Сервис подключает пользовательский аккаунт MAX через QR и предоставляет HTTP-доступ к сообщениям, чатам, истории, расписаниям и пересылкам. Внутри используется неофициальный клиент PyMax 2.4.1. Это не официальный Bot API MAX: отдельный bot token здесь не выдаётся, бот действует от имени подключённого аккаунта.</p>
+<p>Есть три способа работы: Web GUI для ручного управления, Python-клиент для своего приложения, HTTP-запросы со стороннего сервиса. Они обращаются к одной базе аккаунта. Сохранение черновика, запуск рассылки и настройка правила доступны всеми этими способами.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Понятие</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API_KEY</td>
+<td>Секрет вашего сервера. Админский задаётся в .env, пользовательский создаётся администратором</td>
+</tr>
+<tr>
+<td>QR / сессия MAX</td>
+<td>Вход в сам мессенджер; API-ключ его не заменяет</td>
+</tr>
+<tr>
+<td>chat_id</td>
+<td>ID чата MAX, иногда отрицательный; берётся из списка чатов</td>
+</tr>
+<tr>
+<td><a href="http://message.id">message.id</a></td>
+<td>ID сообщения MAX; не равен update_id</td>
+</tr>
+<tr>
+<td>update_id</td>
+<td>Локальный порядковый номер события в базе вашего аккаунта</td>
+</tr>
+<tr>
+<td>Сохранённое сообщение</td>
+<td>Шаблон текста, фото, получателей и расписания</td>
+</tr>
+<tr>
+<td>Запуск / run</td>
+<td>Снимок шаблона и очередь доставок</td>
+</tr>
+<tr>
+<td>Правило пересылки</td>
+<td>Постоянное наблюдение за новыми событиями выбранных источников</td>
+</tr>
+</tbody>
+</table></div>
+<p>В 3D-схеме на главной можно выбирать узлы. Она показывает путь запроса: клиент → HTTPS → API → аккаунт MAX. Текст wiki работает и без WebGL. Ключи в эту wiki вводить не нужно.</p>
+</section><section class="doc" id="section-2"><h2>02 · Установка и первый вход</h2>
+<p>Начиная с v1.10.1 основной Docker Compose запускает два сервиса: max-api
+на порту 8087 и wiki на 8088. Отдельно запускать Python-сервер документации
+не требуется. В корневом .env можно задать WIKI_BIND_HOST=0.0.0.0,
+чтобы открыть документацию по http://IP_СЕРВЕРА:8088. По умолчанию доступ
+локальный; используйте SSH-туннель или свою конфигурацию HTTPS proxy.
+После изменения настройки выполните docker compose up -d --build --force-recreate wiki.
+Контейнер документации не получает API_KEY и не имеет доступа к сессиям MAX.</p>
+<p>Нужен архив сервера max-userbot-v1.11.0.zip, Docker с Compose v2 и Python 3 для генерации ключа. Команды ниже выполняются в терминале сервера.</p>
+<pre><code class="language-bash">unzip max-userbot-v1.11.0.zip
+cd max-userbot
+python3 setup.py
+docker compose up -d --build
+docker compose ps
+curl http://127.0.0.1:8087/healthz
+</code></pre>
+<p>Ожидается <code>{&quot;ok&quot;:true}</code>. Файл <code>.env</code> создаётся один раз; повторный <a href="http://setup.py">setup.py</a> не заменяет его. Найдите в нём значение API_KEY. Это админский ключ, а не ключ с сайта MAX. Не копируйте его в скриншоты, публичные репозитории и браузерные скрипты стороннего сайта.</p>
+<p>При локальной установке откройте <a href="http://127.0.0.1:8087">http://127.0.0.1:8087</a>. Для сервера используйте SSH-туннель с вашего компьютера:</p>
+<pre><code class="language-bash">ssh -L 8087:127.0.0.1:8087 user@server
+</code></pre>
+<p>Пока туннель открыт, локальный адрес ведёт к серверу. Введите API_KEY в карточке доступа, нажмите «Подключить панель». Затем во вкладке подключения нажмите «Начать вход», отсканируйте QR приложением MAX на телефоне и подтвердите вход. Если запрошена 2FA, введите пароль. Дождитесь состояния connected.</p>
+<p>Доступ к панели и подключение MAX — разные этапы. С ключом можно сохранять черновики при отключённом MAX, но отправлять сообщения и читать удалённую историю нельзя. После обновления страницы ключ вводится снова. Сессия MAX хранится в Docker volume и восстанавливается сервером.</p>
+<p>Для доступа в доверенной локальной сети можно задать <code>BIND_HOST=0.0.0.0</code> в .env и выполнить <code>docker compose up -d --force-recreate</code>. В интернете используйте HTTPS, описанный ниже. По умолчанию порт слушает только localhost.</p>
+</section><section class="doc" id="section-3"><h2>03 · Web GUI: все вкладки</h2>
+<p>С v1.10.4 при переключении вкладок обновляется адрес: #connect, #editor,
+#saved, #favorites, #queue, #events, #relays, #logs, #admin.
+Например, <a href="http://127.0.0.1:8087/#relays">http://127.0.0.1:8087/#relays</a> открывает пересылки после ввода ключа.
+Работают «Назад/Вперёд» и восстановление вкладки после обновления страницы.
+Ключ остаётся только в памяти браузера и после перезагрузки вводится заново.
+Неизвестные вкладки и #admin без прав администратора переводят на #connect.
+Ссылка не сохраняет несохранённый текст редактора и не выбирает чужой аккаунт.</p>
+<h3>Оформление: Bootstrap, темы и день/ночь</h3>
+<p>С v1.11.0 панель использует локальный Bootstrap 5.3.8 без CDN.
+Над вкладками доступны темы Ирис, Океан, Лес и Роза, каждая в дневном и ночном вариантах.
+Режим «Авто» следует настройке системы, включая её изменение.
+Выбор сохраняется в localStorage для адреса сервера, синхронизируется между
+вкладками браузера и применяется к экрану входа. Ключ API туда не записывается.
+При запрете localStorage тема действует до закрытия страницы.
+После обновления выполните Ctrl+F5. Для обновления wiki замените папку wiki
+и пересоберите её Docker-сервис.</p>
+<h3>Подключение</h3>
+<p>Проверяйте состояние MAX, запускайте QR-вход и вводите 2FA. Остановка подключения не удаляет сохранённую сессию; после перезапуска сервера она может восстановиться. Это не отзыв сессии на стороне MAX.</p>
+<h3>Редактор сообщения</h3>
+<ol>
+<li>Создайте новое сообщение, загрузите все чаты.</li>
+<li>Выберите получателей галочками. Поиск не сбрасывает уже выбранные чаты. «Выбрать показанные» выбирает текущий отфильтрованный список.</li>
+<li>Укажите внутреннее название, текст и при необходимости одно фото.</li>
+<li>Установите фиксированную паузу 5–30 секунд между попытками отправки в рамках запуска.</li>
+<li>Нажмите «Сохранить» для черновика или «Сохранить и отправить сейчас» для постановки в очередь.</li>
+</ol>
+<p>Черновик без получателей можно сохранить при выключенном расписании. Отправка и активный cron требуют хотя бы одного получателя. Пустой текст разрешён только вместе с фото. Лимиты: 4000 символов, 1000 уникальных получателей, одна картинка JPEG/PNG/WebP до 10 МиБ и 20 мегапикселей.</p>
+<h3>Сохранённые сообщения</h3>
+<p>Здесь общий список, поиск, расписания и ближайшее время запуска. «Открыть» переносит настройки в редактор; сохранение применяет изменения. «Удалить» удаляет шаблон и отменяет ещё не начавшиеся доставки этого шаблона. Уже созданные запуски содержат снимок: изменение текста не меняет их содержимое.</p>
+<h3>Расписание мышкой</h3>
+<p>Выберите периодичность, дни недели или день месяца, часы и минуты. Установите флажок включения cron. «Ближайшие запуски» помогает проверить результат. По умолчанию выбран <strong>Анадырь · Asia/Anadyr (UTC+12)</strong>. Старые сохранённые расписания сохраняют прежний часовой пояс. Расписание исполняет сервер; браузер можно закрыть.</p>
+<h3>Избранные</h3>
+<p>Нажмите звёздочку у чата в редакторе. На вкладке избранного можно создать сообщение для выбранного набора. Удаление из избранного не меняет получателей уже сохранённых сообщений.</p>
+<h3>Очередь и результаты</h3>
+<p>Проверяйте каждую доставку. Принятие задания не равно отправке, отправка не равна прочтению. Отмена касается ожидающих доставок: начавшаяся может закончиться. При состоянии unknown сначала проверьте чат вручную. После сбоя сервер не повторяет такую отправку автоматически.</p>
+<h3>Входящие</h3>
+<p>Выберите чат слева, сообщения появятся справа. При подключённом MAX читается его история, включая сообщения до установки сервиса; при отключённом — только локально накопленные события. Кнопка загрузки предыдущих сообщений читает следующую страницу истории.</p>
+<p>Стили и фото отображаются по данным MAX. Неизвестные стили становятся обычным текстом; видео и опросы не воспроизводятся. «Импортировать в сообщение» переносит текст, эмодзи и первую фотографию в новый черновик, без получателей и активного cron. Нативное оформление в обычный редактор не переносится. Импорт не отправляет сообщение. При нескольких фото редактор берёт первое; автоматическая копия поддерживает до десяти.</p>
+<h3>Пересылки</h3>
+<p>Укажите название, режим, получателя и исходные чаты. У назначения есть поиск и фильтры «Группы / Каналы / Личные»; выбранный получатель сохраняется при фильтрации. Под источниками видны их количество и названия.</p>
+<ul>
+<li><strong>Переслать</strong>: обычный forward средствами MAX.</li>
+<li><strong>Создать новое</strong>: копия текста, нативного оформления и фото. Можно отключить подпись или добавить гиперссылку с названием исходного чата. Цель ссылки — чат либо конкретное исходное сообщение.</li>
+</ul>
+<p>Включите правило после сохранения. Оно обрабатывает новые события, полученные после включения, без перечитывания прежней истории. История за простой не догружается автоматически. Пауза 5–30 секунд применяется в рамках правила, а не как общий лимит всех отправок аккаунта.</p>
+<p>Перепосты с признаком FORWARD пропускаются в обоих режимах; обычные ответы REPLY допускаются. Дубли текста и одинаковых байтов фото в одно назначение подавляются даже между разными правилами одного аккаунта. Это не поиск смысловых дублей: изменённый текст и перекодированное фото могут пройти. Если две копии не имеют признака перепоста, отправляется первая полученная; первоначального автора сервис по ним не определит. Для других вложений штатного forward используются доступные ID медиа; без них фильтр ограничен ID исходного сообщения.</p>
+<p>Ссылки используют <a href="http://max.ru">max.ru</a>; открытие приложения зависит от устройства. Закрытые чаты доступны участникам. Копирование видео и других неподдерживаемых вложений завершается ошибкой целиком; используйте обычную пересылку. Циклы правил и источник, совпадающий с назначением, запрещены.</p>
+<p>Выключение отменяет ожидающую очередь. Повторное включение берёт только новые события. Смена источников/назначения тоже сбрасывает ожидающие задания. Режим и параметры ссылки уже поставленных заданий сохраняются до завершения. «Последние отправки» загружаются только кнопкой, по 100 записей.</p>
+<h3>Администратор</h3>
+<p>Админский ключ из .env открывает вкладку пользователей. Создайте пользователя и сохраните показанный ключ: повторно его получить нельзя. Пользователь подключает свой MAX; его чаты, события, шаблоны и пересылки изолированы.</p>
+<p>Доступны переименование, замена ключа, блокировка, разблокировка, удаление и открытие панели аккаунта. Замена ключа отзывает старый. Блокировка прекращает доступ и фоновые задачи; после разблокировки сохранённые задачи могут продолжиться. Удалённые данные перемещаются в <code>/data/deleted</code>, автоматической панели восстановления нет.</p>
+<p>Статистика показывает накопленные сервисом события, сохранённые сообщения, расписания, правила, доставки, API-запросы, ошибки, размер файлов и время работы. Это не полная статистика MAX и не подтверждения прочтения. Сводка по запросам ведётся по UTC; журнал хранит последние административные действия. Администратор может управлять аккаунтом через X-User-ID, обычному пользователю этот заголовок запрещён.</p>
+</section><section class="doc" id="section-4"><h2>04 · Договор HTTP API</h2>
+<p>Базовый адрес примеров: <code>https://max-api.example.com</code> без <code>/api</code> на конце. Замените домен и ID собственными. Запросы <code>/api/*</code> требуют заголовок:</p>
+<pre><code class="language-http">Authorization: Bearer YOUR_USER_API_KEY
+</code></pre>
+<p>У запроса JSON добавьте Content-Type: application/json. Для multipart boundary формирует HTTP-клиент: не устанавливайте application/json вручную. Ключ не передаётся в URL. Все обычные пользовательские операции доступны и администратору. Для чужого аккаунта администратор добавляет <code>X-User-ID: USER_ID</code>.</p>
+<p>ID чатов и сообщений храните строками. API принимает числовые строки в полях int; ответ сериализует ключевые MAX ID строками, чтобы JavaScript не округлял 64-битные значения. Не преобразуйте их через Number в n8n или другом JS-коде. update_id — отдельный локальный счётчик.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Курсор</th>
+<th>Где используется</th>
+<th>Единицы / порядок</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>next_marker → marker</td>
+<td>/chats</td>
+<td>Непрозрачный серверный маркер, передавайте как есть</td>
+</tr>
+<tr>
+<td>next_offset → after</td>
+<td>/updates</td>
+<td>Локальный update_id; выдача по возрастанию</td>
+</tr>
+<tr>
+<td>next_before → before</td>
+<td>/history/{chat_id}</td>
+<td>Время MAX в миллисекундах, старые сообщения</td>
+</tr>
+<tr>
+<td>next_before → before</td>
+<td>/inbox/{chat_id}</td>
+<td>Локальный update_id, старые события</td>
+</tr>
+<tr>
+<td>upcoming</td>
+<td>/schedule/preview</td>
+<td>Unix timestamp в секундах</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>/healthz</code> сообщает, что процесс отвечает, а не что MAX подключён. Это проверяет <code>/api/status</code>. OpenAPI tenant-сервиса доступна по <code>/openapi.json</code>; админские маршруты шлюза туда не включены. В wiki приложены обе схемы отдельно. <code>/docs</code> и <code>/redoc</code> в сервере выключены.</p>
+<p>Запросы на отправку не имеют ключа идемпотентности. При сетевом обрыве/HTTP 502/504 доставка может состояться. Автоматический повтор POST способен создать дубль. Проверяйте историю вручную. Приём задания со статусом 202 означает очередь, а не успешную доставку.</p>
+</section><section class="doc" id="section-5"><h2>05 · Python: подключение и QR</h2>
+<p>В папке examples находится <a href="http://client.py">client.py</a>, использующий стандартную библиотеку Python 3.10. Устанавливать requests не нужно. Скопируйте examples в отдельный рабочий каталог вне опубликованной wiki и запускайте примеры там. Не сохраняйте ключи, QR, логи и файлы сессий в каталоге сайта. Переменные примеров не являются переменными Docker сервера:</p>
+<pre><code class="language-bash">export MAX_API_URL='http://127.0.0.1:8087'
+read -r -s -p 'Пользовательский API-ключ: ' MAX_API_KEY
+export MAX_API_KEY
+python3 client.py
+</code></pre>
+<p>Для внешнего сервера задайте HTTPS-адрес. Команда <a href="http://client.py">client.py</a> выводит статус и все страницы списка чатов. При отключённом MAX список вернёт 409; сначала авторизуйтесь через GUI либо код ниже.</p>
+<pre><code class="language-python">from pathlib import Path
+import time
+from client import MaxAPI
+
+api = MaxAPI()
+api.request('POST', 'auth/start')
+for _ in range(90):
+    status = api.request('GET', 'status')
+    print(status['state'])
+    if status['state'] == 'connected':
+        break
+    if status['qr_available']:
+        Path('qr.png').write_bytes(api.request('GET', 'auth/qr', binary=True))
+        # Откройте qr.png и подтвердите вход на телефоне.
+    if status['state'] == 'password_required':
+        from getpass import getpass
+        api.request('POST', 'auth/password', {'password': getpass('2FA: ')})
+    time.sleep(2)
+else:
+    raise RuntimeError('Вход не завершён; проверьте status и запустите снова')
+</code></pre>
+<p>QR может обновляться; сохраняйте актуальный файл. Состояния входа определяет <code>/status</code>; не отправляйте пароль, пока он не запрошен. Не публикуйте QR и файл сессии.</p>
+</section><section class="doc" id="section-6"><h2>06 · Python: текст, фото и история</h2>
+<p>Примеры ниже выполняют реальные отправки. Сначала выберите тестовый чат, доступный вашему аккаунту.</p>
+<pre><code class="language-python">from client import MaxAPI
+api = MaxAPI()
+chat_id = '-123456789'  # Заменить значением из api.chats()
+result = api.send(chat_id, '**Привет!** 👋\n_Сообщение из Python_')
+print(result)
+api.photo(chat_id, 'image.jpg', '**Фото** 📷')
+# Ответ на конкретное сообщение:
+# api.send(chat_id, 'Принято', reply_to='MESSAGE_ID')
+</code></pre>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Оформление</th>
+<th>Синтаксис в text</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Жирный</td>
+<td><code>**текст**</code></td>
+</tr>
+<tr>
+<td>Курсив</td>
+<td><code>_текст_</code></td>
+</tr>
+<tr>
+<td>Подчёркивание</td>
+<td><code>__текст__</code></td>
+</tr>
+<tr>
+<td>Зачёркивание</td>
+<td><code>~~текст~~</code></td>
+</tr>
+<tr>
+<td>Код</td>
+<td>Одинарные обратные кавычки</td>
+</tr>
+<tr>
+<td>Гиперссылка</td>
+<td><code>[название](https://example.com)</code></td>
+</tr>
+<tr>
+<td>Цитата</td>
+<td><code>&gt; текст</code> в начале строки</td>
+</tr>
+<tr>
+<td>Заголовок</td>
+<td><code># текст</code> в начале строки</td>
+</tr>
+</tbody>
+</table></div>
+<p>Это ограниченный Markdown PyMax, не HTML. Inline-стили не переходят через перенос строки; экранирование обратным слешем не поддерживается. Эмодзи передаются Unicode. У сообщений в истории оформление хранится отдельно в elements с UTF-16-смещениями.</p>
+<pre><code class="language-python">before = 0
+for _ in range(3):  # Не более трёх страниц для примера
+    page = api.request('GET', f'history/{chat_id}', params={'before': before, 'limit': 50})
+    for item in page['messages']:
+        message = item['message']
+        print(message['id'], message.get('sender'), message.get('text'))
+    before = page['next_before']
+    if before is None:
+        break
+</code></pre>
+<p>История запрашивается у MAX и требует соединения. <code>/updates</code> читает только локальный журнал и не заменяет архивную историю. В нём могут быть и сообщения вашего аккаунта. Повторное событие с теми же chat_id и <a href="http://message.id">message.id</a> не добавляется; изменения сообщения не образуют полноценный поток правок.</p>
+</section><section class="doc" id="section-7"><h2>07 · Python: шаблоны, cron и пересылки</h2>
+<p>Создание/изменение сохранённого сообщения — <strong>форма с полем payload, содержащим JSON</strong>, а не обычный JSON POST.</p>
+<pre><code class="language-python">import json
+from client import MaxAPI
+api = MaxAPI()
+payload = {
+    'title': 'Утреннее сообщение',
+    'text': '**Доброе утро!** ☀️',
+    'chat_ids': ['-123456789', '987654321'],
+    'interval_seconds': 10,
+    'cron': '0 9 * * 1-5',
+    'timezone': 'Asia/Anadyr',
+    'enabled': False,
+    'notify': True
+}
+draft = api.save(payload)
+identifier = draft['id']
+print(api.request('POST', 'schedule/preview', {
+    'cron': payload['cron'], 'timezone': payload['timezone']
+}))
+# Включение расписания после проверки:
+# api.request('PATCH', f'saved-messages/{identifier}/schedule', {'enabled': True})
+# Разовый запуск:
+# run = api.request('POST', f'saved-messages/{identifier}/send')
+# print(api.request('GET', 'send-runs'))
+# api.request('POST', f&quot;send-runs/{run['id']}/cancel&quot;)
+# Изменение передаёт полный payload:
+payload['text'] = 'Обновлённый текст'
+api.save(payload, identifier=identifier)
+# Фото: api.save({**payload, 'photo_action': 'replace'}, 'image.jpg', identifier)
+# Удалить фото: api.save({**payload, 'photo_action': 'remove'}, identifier=identifier)
+# Удалить шаблон: api.request('DELETE', f'saved-messages/{identifier}')
+</code></pre>
+<p>Cron содержит пять полей: минута, час, день месяца, месяц, день недели. <code>0 9 * * 1-5</code> — будни в 09:00 выбранного часового пояса. Не добавляйте поле секунд. Preview возвращает пять времён в Unix-секундах. Для печати используйте datetime.fromtimestamp(value, ZoneInfo('Asia/Anadyr')).</p>
+<p>Новые события для автоматического правила:</p>
+<pre><code class="language-python">rule = api.request('POST', 'relays', {
+    'title': 'Новости в канал',
+    'destination': '-300',
+    'source_chat_ids': ['-100', '-200'],
+    'interval': 5,
+    'enabled': False,
+    'mode': 'copy',
+    'add_source': True,
+    'link_target': 'message'
+})
+# Замените ID выше реальными; затем можно включить:
+# api.request('PATCH', f&quot;relays/{rule['id']}/enabled&quot;, {'enabled': True})
+# Обычная пересылка: mode='forward'; add_source/link_target в ней игнорируются.
+print(api.request('GET', 'relays'))
+print(api.request('GET', 'relays', params={'include_jobs': 'true', 'limit': 100}))
+</code></pre>
+<p>Правило принимает до 100 уникальных источников. PUT /relays/{id} передаёт весь объект, PATCH .../enabled меняет только включение. Значения mode: copy/forward; link_target: chat/message. У новых правил ссылка по умолчанию ведёт на чат, старые правила сохраняют прежний режим ссылки на сообщение.</p>
+</section><section class="doc" id="section-8"><h2>08 · Доступ со стороннего сервиса через интернет</h2>
+<p>Нужны домен, сервер с публичным IP и входящие TCP-порты 80/443. Создайте DNS A-запись <a href="http://max-api.example.com">max-api.example.com</a> на IP сервера. Если есть AAAA, IPv6 тоже должен вести на доступный сервер. За NAT потребуется проброс портов. Порт 8087 оставьте на 127.0.0.1.</p>
+<p>В комплекте deploy есть дополнительный Compose-файл и Caddyfile. Скопируйте их в <strong>существующую папку API</strong>, рядом с его compose.yaml. Замените домен в Caddyfile. Caddy присоединится к той же Docker-сети и направит запросы на max-api:8087.</p>
+<pre><code class="language-bash"># Выполнять из прежней папки max-userbot:
+docker compose -f compose.yaml -f compose.https.yaml up -d --build
+docker compose -f compose.yaml -f compose.https.yaml logs --tail=50 caddy
+curl https://max-api.example.com/healthz
+</code></pre>
+<p>Для последующих команд этой установки используйте ту же пару <code>-f</code>. Caddy получает сертификат и перенаправляет HTTP на HTTPS при корректном DNS и доступных портах. Не запускайте второй proxy на уже занятых 80/443: добавьте маршрут в существующий. Для nginx альтернативно нужны TLS-настройки и лимит тела не меньше 12m для фото. Полные TLS-инструкции: официальные ссылки в конце wiki.</p>
+<p>Настройка HTTP-модуля любого внешнего сервиса:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Поле</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Method</td>
+<td>POST</td>
+</tr>
+<tr>
+<td>URL</td>
+<td><a href="https://max-api.example.com/api/messages">https://max-api.example.com/api/messages</a></td>
+</tr>
+<tr>
+<td>Authentication / header</td>
+<td>Authorization: Bearer пользовательский_ключ</td>
+</tr>
+<tr>
+<td>Content-Type</td>
+<td>application/json</td>
+</tr>
+<tr>
+<td>Body</td>
+<td>JSON ниже</td>
+</tr>
+<tr>
+<td>Timeout</td>
+<td>Не менее 150 секунд для операций с фото</td>
+</tr>
+<tr>
+<td>Automatic retry</td>
+<td>Выключен для отправки</td>
+</tr>
+</tbody>
+</table></div>
+<pre><code class="language-json">{
+  &quot;chat_id&quot;: &quot;-123456789&quot;,
+  &quot;text&quot;: &quot;**Новый заказ** 📦\nНомер: 12345&quot;,
+  &quot;notify&quot;: true
+}
+</code></pre>
+<p>В n8n это узел HTTP Request, в Make — HTTP-модуль: названия полей могут отличаться по версии. Секрет сохраните в хранилище credentials сервиса. Сначала выполните GET /api/status, затем один POST в тестовый чат. Для фото используйте multipart: chat_id, text и бинарное поле photo; URL картинки не заменяет загрузку файла. Для шаблона используйте строковое поле payload с JSON и при необходимости бинарный photo.</p>
+<p>Если внешняя система повторяет одно бизнес-событие, ведите у неё таблицу обработанных order_id/event_id. Фильтр дублей пересылок не защищает обычный POST /messages. Автоматический повтор после таймаута отключите, результат проверьте отдельно.</p>
+<p>Входящие для внешнего сервиса организуются опросом: по таймеру GET /api/updates?after=OFFSET&amp;limit=100, обработка массива updates, сохранение next_offset. Сохраняйте позицию в постоянном хранилище, не в памяти одного выполнения. Не запускайте конкурентные обработчики одного курсора. Встроенной регистрации webhook, callback URL и long polling в этой версии нет.</p>
+<p>Клиентский JavaScript публичного сайта не должен содержать ключ: используйте свой backend. CORS для сторонних браузерных origins в сервере не включён. Серверные HTTP-запросы из Python/CRM/автоматизации CORS не затрагивает. Внешнему сервису давайте пользовательский ключ: он всё равно имеет полный доступ к своему аккаунту, ключей только для отправки пока нет.</p>
+</section><section class="doc" id="section-9"><h2>09 · Пример бота команд</h2>
+<p>Готовый examples/bot.py отвечает на <code>/help</code>, <code>/ping</code>, <code>/time</code>. Он работает через этот HTTP API и пишет от имени пользовательского аккаунта. Для первого запуска используйте отдельный тестовый аккаунт или чат.</p>
+<ol>
+<li>В админ-панели создайте пользователя для интеграции. Войдите его ключом и подключите MAX через QR.</li>
+<li>Получите ID тестового чата командой python3 <a href="http://client.py">client.py</a>.</li>
+<li>Отправьте в этот чат со своего подключённого аккаунта уникальный текст, например <code>определить-id-бота-001</code>.</li>
+<li>Прочитайте /api/history/{chat_id}; найдите это сообщение и возьмите поле sender. Это BOT_OWN_ID. Endpoint для собственного профиля в данной версии отсутствует.</li>
+<li>Скопируйте examples в отдельный каталог вне сайта wiki. Там скопируйте bot.env.example в bot.env, заполните MAX_API_URL, MAX_API_KEY, BOT_OWN_ID и BOT_CHAT_IDS. Несколько ID чатов разделяются запятыми.</li>
+<li>Запустите Docker-пример ниже. С другого аккаунта отправьте /ping в разрешённый чат: ожидается pong 👋.</li>
+</ol>
+<pre><code class="language-bash">cp -R examples &quot;$HOME/max-command-bot&quot;
+cd &quot;$HOME/max-command-bot&quot;
+cp bot.env.example bot.env
+# Отредактируйте bot.env: замените все примерные значения.
+chmod 600 bot.env
+docker compose up -d --build
+docker compose logs -f bot
+</code></pre>
+<p>Это отдельный Compose-проект бота. Из контейнера <code>127.0.0.1:8087</code> указывает на сам контейнер бота, а не на API; используйте HTTPS-домен. При запуске Python на том же хосте можно использовать локальный API:</p>
+<pre><code class="language-bash"># После заполнения bot.env. Формат примера совместим с bash:
+set -a
+. ./bot.env
+set +a
+python3 bot.py
+</code></pre>
+<p>На Linux нужен установленный пакет часовых поясов tzdata; на Windows при отсутствии IANA-базы выполните <code>python -m pip install tzdata</code>. В Docker-примере системная база устанавливается автоматически.</p>
+<p>Бот игнорирует собственный sender, неподтверждённый sender, перепосты и чаты вне разрешённого списка. Он отвечает только на точные команды, а не на любой текст, чтобы избежать циклов с другими ботами. BOT_OWN_ID должен соответствовать подключённому аккаунту, иначе собственные сообщения могут ошибочно обрабатываться.</p>
+<p>При первом запуске бот проходит существующий локальный журнал без ответов и сохраняет текущую позицию. Команды, пришедшие во время этого начального прохода, тоже могут быть пропущены; отправьте тест после сообщения в логе о готовности. После перезапуска бот продолжает с сохранённого курсора и обрабатывает накопленные события.</p>
+<p>Перед отправкой бот записывает попытку в SQLite. Если процесс падает или HTTP-результат неизвестен, попытка не повторяется автоматически. Это выбор в пользу отсутствия повторных ответов ценой возможного пропуска; гарантия exactly-once не заявляется. Смотрите attempts в bot-state.sqlite или /state/bot.sqlite контейнера. Запускайте один экземпляр на одну базу; разные копии с отдельными базами могут ответить повторно. Не удаляйте volume bot-state при обновлении.</p>
+<p>Чтобы добавить команду, измените reply_for в <a href="http://bot.py">bot.py</a>: верните строку ответа для нужного текста или None для пропуска. При подстановке произвольного пользовательского текста учитывайте Markdown. Пример специально отвечает фиксированным текстом и не выполняет команды из сообщений.</p>
+</section><section class="doc" id="section-10"><h2>10 · Справочник маршрутов</h2>
+<p>Во всех таблицах пути начинаются с /api, если явно не указано другое. Требуется Bearer-ключ. Полные поля запросов, типы и ответы в разделах OpenAPI ниже; модели возвращаемых MAX сообщений зависят от клиента, поэтому произвольные дополнительные поля не считаются стабильным контрактом.</p>
+<h3>Подключение и чаты</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Метод</th>
+<th>Путь</th>
+<th>Тело / параметры</th>
+<th>Результат</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td>/status</td>
+<td>—</td>
+<td>state, error, password_hint, qr_available</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/auth/start</td>
+<td>—</td>
+<td>Запуск/восстановление подключения, статус</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/auth/stop</td>
+<td>—</td>
+<td>Остановка подключения, статус</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/auth/qr</td>
+<td>—</td>
+<td>PNG; 409, если QR не готов</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/auth/password</td>
+<td>JSON password (1–1024)</td>
+<td>accepted</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/chats</td>
+<td>marker ≥ 1; cached=false</td>
+<td>chats, next_marker, complete, warning</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/history/{chat_id}</td>
+<td>before=0; limit=50 (1–100)</td>
+<td>messages, next_before, source=max</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/updates</td>
+<td>after=0; limit=100 (1–500)</td>
+<td>updates, next_offset</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/inbox/chats</td>
+<td>—</td>
+<td>chats с chat_id и count локальных событий</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/inbox/{chat_id}</td>
+<td>before=0; limit=50 (1–100)</td>
+<td>messages, next_before локального журнала</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/source/resolve</td>
+<td>JSON chat_id и url либо message_id</td>
+<td>chat_id, message_id, url, text</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/source/{chat_id}/{message_id}/photo/{index}</td>
+<td>index начинается с 0</td>
+<td>Бинарное фото; нужен подключённый MAX</td>
+</tr>
+</tbody>
+</table></div>
+<p>cached=true у /chats выдаёт только начальный кеш и complete=false: это не способ получить все чаты.</p>
+<h3>Отправка и шаблоны</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Метод</th>
+<th>Путь</th>
+<th>Вход</th>
+<th>Результат</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>POST</td>
+<td>/messages</td>
+<td>JSON chat_id, text; reply_to=null, notify=true</td>
+<td>Сообщение MAX</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/messages/photo</td>
+<td>multipart chat_id, photo; text, reply_to, notify</td>
+<td>Сообщение MAX</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/saved-messages</td>
+<td>—</td>
+<td>messages</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/saved-messages</td>
+<td>form payload JSON, optional photo</td>
+<td>201, шаблон</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/saved-messages/{id}</td>
+<td>—</td>
+<td>Шаблон</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td>/saved-messages/{id}</td>
+<td>Полный form payload, optional photo</td>
+<td>Обновлённый шаблон</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td>/saved-messages/{id}</td>
+<td>—</td>
+<td>deleted</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/saved-messages/{id}/photo</td>
+<td>—</td>
+<td>Бинарное фото / 404</td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td>/saved-messages/{id}/schedule</td>
+<td>JSON enabled</td>
+<td>Шаблон</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/saved-messages/{id}/send</td>
+<td>—</td>
+<td>202, снимок запуска</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/send-runs</td>
+<td>limit=30 (1–100)</td>
+<td>runs, scheduler_error, connected</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/send-runs/{id}/cancel</td>
+<td>—</td>
+<td>Результат отмены</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/schedule/preview</td>
+<td>JSON cron, timezone</td>
+<td>timezone, upcoming (5 времён)</td>
+</tr>
+</tbody>
+</table></div>
+<p>Поля payload шаблона: title (1–120), text (до 4000), chat_ids (до 1000), interval_seconds (5–30), cron (5 полей), timezone (Asia/Anadyr по умолчанию), enabled=false, notify=true, photo_action=keep/replace/remove. Без текста и фото сохранение не проходит. keep сохраняет прежнюю картинку, replace требует загрузки новой, remove удаляет её.</p>
+<h3>Избранное, пересылки, пользователи</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Метод</th>
+<th>Путь</th>
+<th>Вход / назначение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td>/favorite-chats</td>
+<td>Список chats</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td>/favorite-chats/{chat_id}</td>
+<td>JSON title, type (CHAT/DIALOG/CHANNEL)</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td>/favorite-chats/{chat_id}</td>
+<td>Удалить из избранного</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/relays</td>
+<td>include_jobs=false; limit=100 (1–500)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/relays</td>
+<td>JSON AutoRelay</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td>/relays/{id}</td>
+<td>Полный JSON AutoRelay</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td>/relays/{id}</td>
+<td>Удалить правило, отменить ожидание</td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td>/relays/{id}/enabled</td>
+<td>JSON enabled</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/logs</td>
+<td>level, before, limit; журнал текущего аккаунта</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/whoami</td>
+<td>role, user текущего аккаунта</td>
+</tr>
+<tr>
+<td>GET</td>
+<td>/admin/users</td>
+<td>Админ: users, totals, daily, uptime_seconds, audit</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/admin/users</td>
+<td>Админ: JSON name; 201, user и api_key</td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td>/admin/users/{id}</td>
+<td>Админ: JSON name</td>
+</tr>
+<tr>
+<td>POST</td>
+<td>/admin/users/{id}/key</td>
+<td>Админ: новый api_key, прежний отозван</td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td>/admin/users/{id}/enabled</td>
+<td>Админ: JSON enabled</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td>/admin/users/{id}</td>
+<td>Админ: отзыв доступа, архив данных</td>
+</tr>
+</tbody>
+</table></div>
+<p>Пример администратора:</p>
+<pre><code class="language-bash">curl -X POST &quot;$MAX_API_URL/api/admin/users&quot; \
+  -H &quot;Authorization: Bearer $ADMIN_API_KEY&quot; \
+  -H 'Content-Type: application/json' \
+  -d '{&quot;name&quot;:&quot;Интеграция CRM&quot;}'
+# Ответ содержит api_key: сохраните его как секрет, не в журнал автоматизации.
+</code></pre>
+<p>В пользовательских интеграциях не задавайте X-User-ID. /whoami возвращает учётную запись сервиса, не профиль MAX и не его sender ID.</p>
+</section><section class="doc" id="section-11"><h2>11 · Ошибки и диагностика</h2>
+<h3>Ошибка proto.payload при обычной пересылке</h3>
+<p>В v1.10.3 исправлен тип link.messageId: нативный запрос пересылки отправляет
+целочисленный ID вместо строки из модели PyMax 2.4.1. Точность ID проверена
+сериализатором WebSocket. Это устранение обнаруженного расхождения с запросом
+веб-клиента; успешная доставка должна быть подтверждена на вашем аккаунте.
+Для проверки создайте новое оригинальное сообщение с уникальным текстом.
+Старые unknown-задания не повторяются и отпечатки не очищаются автоматически.
+Если MAX снова отклонит запрос, сохраните свежий журнал с max_error_code.</p>
+<h3>Вкладка «Логи» (начиная с API v1.10.0)</h3>
+<p>Откройте «Логи» и нажмите «Обновить» после воспроизведения ошибки. Выберите ERROR для ошибок, WARNING для отклонённых запросов или все уровни. «Предыдущие записи» загружает более старые записи. «Скачать показанные JSON» сохраняет только уже загруженный список с выбранным фильтром.</p>
+<p>Журнал отдельный у каждого аккаунта. Администратор открывает панель нужного пользователя и переходит в его «Логи». Ошибки входа без действующего ключа и операции администрирования записываются в журнал администратора. Ключи, тела запросов, query string, пароли, QR и тексты переписок не записываются. У исключения сохраняются класс и последние места в коде (файл, функция, строка), без текста исключения и локальных переменных.</p>
+<p>В v1.10.2 записи ApiError содержат max_error_code и max_opcode, когда MAX передал структурированный код. Свободный текст ответа и payload не записываются. Для пересылки operation показывает copy или forward. Если журнал старой версии содержит только ApiError, точную причину задним числом восстановить нельзя: нужна новая попытка с новым оригинальным сообщением. Старые unknown-задания автоматически не повторяются.</p>
+<p>Все HTTP-ответы получают заголовок X-Request-ID. При ошибке панель показывает «Запрос: …». Найдите этот request_id в скачанном JSON: он связывает запрос и синхронную внутреннюю ошибку. Фоновые отправки связываются по run_id либо rule_id/job_id. Успешные GET-опросы не засоряют журнал; записываются изменения, ошибки, вход MAX и результаты отправок. Старые ошибки, возникшие до обновления, восстановить нельзя — воспроизведите проблему снова.</p>
+<p>GET <strong>/api/logs</strong>: параметры level=INFO/WARNING/ERROR (необязательный), before=0, limit=100 (1–500). Ответ: logs, next_before, retention=5000, timezone=UTC. Передавайте next_before как before для следующей страницы. На сервере хранятся последние 5000 записей в diagnostics.sqlite каждого аккаунта; панель показывает время в Asia/Anadyr, JSON — ISO UTC. Записи также выводятся в stdout контейнера. Compose новой версии ограничивает Docker-лог тремя файлами по 10 МиБ. На старой установке перенесите секцию logging из нового compose.yaml, сохраняя прочие собственные настройки.</p>
+<pre><code class="language-bash">curl -H &quot;Authorization: Bearer $MAX_API_KEY&quot; \
+  &quot;$MAX_API_URL/api/logs?level=ERROR&amp;limit=100&quot; &gt; max-errors.json
+docker compose logs --since=30m --tail=200 max-api
+</code></pre>
+<p>Логи API, proxy и бота — разные журналы. Если запрос не дошёл до API (ошибка DNS, TLS, 502 от proxy), смотрите docker compose logs caddy. Docker Engine может отдельно сообщать о старте контейнера и ошибках запуска. В логах нет полного содержимого переписки: для отчёта достаточно версии, действия, времени, request_id и соответствующих записей.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Симптом / код</th>
+<th>Проверка и действие</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP:8087 недоступен</td>
+<td>По умолчанию bind=127.0.0.1; используйте SSH или HTTPS proxy. Проверьте compose ps и firewall</td>
+</tr>
+<tr>
+<td>401</td>
+<td>Bearer-ключ неверен, заменён, пользователь удалён/заблокирован; проверьте /whoami</td>
+</tr>
+<tr>
+<td>403</td>
+<td>Пользователь вызвал /admin или передал X-User-ID</td>
+</tr>
+<tr>
+<td>404</td>
+<td>Неверный маршрут/ID или у шаблона нет фото</td>
+</tr>
+<tr>
+<td>409</td>
+<td>Часто MAX отключён, QR/2FA не готов; читайте detail и /status</td>
+</tr>
+<tr>
+<td>422</td>
+<td>Ошибка JSON/формы, лимитов, cron, самопересылка или цикл правил</td>
+</tr>
+<tr>
+<td>413 / фото не проходит</td>
+<td>Ограничение proxy либо файл превышает допустимый размер</td>
+</tr>
+<tr>
+<td>502 / 504 на отправке</td>
+<td>Результат может быть неизвестен: не повторять автоматически</td>
+</tr>
+<tr>
+<td>500</td>
+<td>Сохраните метод, маршрут, время и обезличенную ошибку; изучите лог контейнера</td>
+</tr>
+<tr>
+<td>Чатов мало</td>
+<td>Пройдите все next_marker, не используйте cached=true; проверьте complete и warning</td>
+</tr>
+<tr>
+<td>Бот молчит</td>
+<td>connected, верные BOT_OWN_ID/BOT_CHAT_IDS, точная команда, другой sender, первый проход уже завершён</td>
+</tr>
+<tr>
+<td>Cron молчит</td>
+<td>enabled, получатели, часовой пояс, preview, соединение MAX, scheduler_error</td>
+</tr>
+<tr>
+<td>Пересылка пропущена</td>
+<td>FORWARD/дубль, событие раньше включения, правило выключено или недоступные вложения</td>
+</tr>
+<tr>
+<td>Не открывается приложение по ссылке</td>
+<td>Настройки устройства/браузера; доступ участника к закрытому чату; проверка ссылки на телефоне</td>
+</tr>
+</tbody>
+</table></div>
+<pre><code class="language-bash">docker compose ps
+docker compose logs --tail=100 max-api
+curl -H &quot;Authorization: Bearer $MAX_API_KEY&quot; &quot;$MAX_API_URL/api/status&quot;
+</code></pre>
+<p>Тело ошибки обычно содержит detail (строка либо массив ошибок валидации). Не отправляйте для диагностики .env, QR, содержимое сессии, пользовательские ключи и полные личные переписки.</p>
+</section><section class="doc" id="section-12"><h2>12 · Обновление и резервная копия</h2>
+<p>Обновляйте в прежней папке Compose, чтобы сохранить имя проекта и его volume. Заменяйте app и requirements.txt из новой версии, сохраняйте .env, compose.yaml и volume. Затем docker compose up -d --build --force-recreate, после — Ctrl+F5. Если подключён HTTPS, используйте оба Compose-файла. Не выполняйте down -v: удалятся данные.</p>
+<p>Для согласованной копии SQLite сначала остановите API. Пример выполняется из корня проекта API, копирует весь /data и .env в закрытую папку backup. Храните её отдельно от публичного веб-каталога.</p>
+<pre><code class="language-bash">mkdir -p backup
+chmod 700 backup
+docker compose stop max-api
+docker compose cp max-api:/data backup/data
+cp .env backup/server.env
+chmod -R go-rwx backup
+docker compose start max-api
+</code></pre>
+<p>Если backup/data уже существует, выберите новый каталог с датой, чтобы не смешивать копии. Сохраните также compose.yaml, дополнительный compose.https.yaml и Caddyfile, если используются. Копия содержит доступ к сессиям MAX и требует такого же ограничения доступа, как ключи.</p>
+<p>Восстановление делайте при остановленном API в volume того же проекта, предварительно сохранив текущее содержимое. Пример для замены всей базы на выбранную копию:</p>
+<pre><code class="language-bash">docker compose stop max-api
+# Сначала отдельная копия текущего состояния; каталог должен быть новым:
+docker compose cp max-api:/data backup/before-restore
+# Копия должна содержать events.sqlite, campaigns.sqlite, relays.sqlite,
+# users.sqlite и сессии/каталоги пользователей из одного момента времени.
+docker compose cp backup/data/. max-api:/data/
+docker compose start max-api
+</code></pre>
+<p>Копирование поверх не удаляет файлы, отсутствующие в архиве. Для строгого восстановления полного снимка используйте чистый volume с прежним набором данных и конфигурацией, а не смешивайте разные даты. После восстановления проверьте /whoami, соединение и очереди перед включением автоматизаций. Резервная копия бота делается отдельно из bot-state при остановленном боте.</p>
+<p>Один процесс API на volume: не увеличивайте workers и не запускайте несколько экземпляров на одних SQLite-файлах. Публичный endpoint не имеет встроенных квот/rate limit; их можно задать на proxy. Ключ пользователя даёт доступ ко всем функциям его аккаунта, scopes не реализованы.</p>
+</section><section class="doc" id="section-13"><h2>13 · Файлы, проверка и источники</h2>
+<p>В архиве: HTML-wiki с поиском и копированием кода, этот Markdown, локальная Three.js и её лицензия, Python-клиент, бот, Docker-примеры и две схемы OpenAPI. Для wiki не требуется API-ключ. Схемы сгенерированы из кода v1.11.0; /whoami описан в тексте, поскольку реализован напрямую в ASGI-шлюзе.</p>
+<p>Примеры предназначены для Python 3.10. В этой среде проверяется код на тестовом HTTP-сервере/подменённом транспорте, не на вашем аккаунте MAX. Docker, выпуск TLS-сертификата, реальную доставку и устройство-получатель нужно проверить при установке. Three.js использована для навигационной схемы; весь справочник доступен без неё.</p>
+<p>Основной источник контракта — app/main.py, app/gateway.py, app/service.py, app/campaigns.py и app/auto_relays.py из вашего архива v1.10.2. Внешние первичные источники для инфраструктуры:</p>
+<ul>
+<li><a href="https://threejs.org/manual/pages/installation.html">Three.js: установка</a> — локальные ES-модули и запуск HTTP-сервера.</li>
+<li><a href="https://threejs.org/manual/pages/creating-a-scene.html">Three.js: создание сцены</a> — сцена, камера и renderer.</li>
+<li><a href="https://caddyserver.com/docs/caddyfile/directives/reverse_proxy">Caddy: reverse_proxy</a> — передача HTTP-запросов приложению.</li>
+<li><a href="https://caddyserver.com/docs/automatic-https">Caddy: Automatic HTTPS</a> — сертификаты, DNS и сетевые требования.</li>
+</ul>
+<p>Wiki v1.0.0 описывает API v1.11.0. Перед переносом примеров на другую версию сверяйте её схему и CHANGELOG.</p>
+</section><section class="doc" id="schema"><h2>14 · OpenAPI: поля запросов</h2><p>Точный снимок схем из исходного кода. Ссылки $ref ведут к моделям в конце соответствующего блока. Ответы без модели описаны в руководстве выше. Авторизация шлюза обязательна, даже если админская схема не объявляет security.</p><div class="actions"><a href="openapi.json" download>openapi.json ↓</a><a href="admin-openapi.json" download>admin-openapi.json ↓</a></div><h3>Tenant API</h3><details><summary>GET /healthz</summary><pre><code>{
+  &quot;summary&quot;: &quot;Health&quot;,
+  &quot;operationId&quot;: &quot;health_healthz_get&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/logs</summary><pre><code>{
+  &quot;summary&quot;: &quot;Logs&quot;,
+  &quot;operationId&quot;: &quot;logs_api_logs_get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;level&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;enum&quot;: [
+              &quot;INFO&quot;,
+              &quot;WARNING&quot;,
+              &quot;ERROR&quot;
+            ],
+            &quot;type&quot;: &quot;string&quot;
+          },
+          {
+            &quot;type&quot;: &quot;null&quot;
+          }
+        ],
+        &quot;title&quot;: &quot;Level&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;before&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;minimum&quot;: 0,
+        &quot;default&quot;: 0,
+        &quot;title&quot;: &quot;Before&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;limit&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;maximum&quot;: 500,
+        &quot;minimum&quot;: 1,
+        &quot;default&quot;: 100,
+        &quot;title&quot;: &quot;Limit&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/status</summary><pre><code>{
+  &quot;summary&quot;: &quot;Status&quot;,
+  &quot;operationId&quot;: &quot;status_api_status_get&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>POST /api/auth/start</summary><pre><code>{
+  &quot;summary&quot;: &quot;Start&quot;,
+  &quot;operationId&quot;: &quot;start_api_auth_start_post&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>POST /api/auth/stop</summary><pre><code>{
+  &quot;summary&quot;: &quot;Stop&quot;,
+  &quot;operationId&quot;: &quot;stop_api_auth_stop_post&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>GET /api/auth/qr</summary><pre><code>{
+  &quot;summary&quot;: &quot;Qr&quot;,
+  &quot;operationId&quot;: &quot;qr_api_auth_qr_get&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>POST /api/auth/password</summary><pre><code>{
+  &quot;summary&quot;: &quot;Password&quot;,
+  &quot;operationId&quot;: &quot;password_api_auth_password_post&quot;,
+  &quot;requestBody&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Password&quot;
+        }
+      }
+    },
+    &quot;required&quot;: true
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>GET /api/chats</summary><pre><code>{
+  &quot;summary&quot;: &quot;Chats&quot;,
+  &quot;operationId&quot;: &quot;chats_api_chats_get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;marker&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;type&quot;: &quot;integer&quot;,
+            &quot;minimum&quot;: 1
+          },
+          {
+            &quot;type&quot;: &quot;null&quot;
+          }
+        ],
+        &quot;title&quot;: &quot;Marker&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;cached&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;default&quot;: false,
+        &quot;title&quot;: &quot;Cached&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/messages</summary><pre><code>{
+  &quot;summary&quot;: &quot;Send&quot;,
+  &quot;operationId&quot;: &quot;send_api_messages_post&quot;,
+  &quot;requestBody&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Send&quot;
+        }
+      }
+    },
+    &quot;required&quot;: true
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>POST /api/messages/photo</summary><pre><code>{
+  &quot;summary&quot;: &quot;Send Photo&quot;,
+  &quot;operationId&quot;: &quot;send_photo_api_messages_photo_post&quot;,
+  &quot;requestBody&quot;: {
+    &quot;content&quot;: {
+      &quot;multipart/form-data&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Body_send_photo_api_messages_photo_post&quot;
+        }
+      }
+    },
+    &quot;required&quot;: true
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>GET /api/favorite-chats</summary><pre><code>{
+  &quot;summary&quot;: &quot;List Favorites&quot;,
+  &quot;operationId&quot;: &quot;list_favorites_api_favorite_chats_get&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>PUT /api/favorite-chats/{chat_id}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Favorite Chat&quot;,
+  &quot;operationId&quot;: &quot;favorite_chat_api_favorite_chats__chat_id__put&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;chat_id&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      }
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Favorite&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>DELETE /api/favorite-chats/{chat_id}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Unfavorite Chat&quot;,
+  &quot;operationId&quot;: &quot;unfavorite_chat_api_favorite_chats__chat_id__delete&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;chat_id&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>PATCH /api/saved-messages/{identifier}/schedule</summary><pre><code>{
+  &quot;summary&quot;: &quot;Toggle Schedule&quot;,
+  &quot;operationId&quot;: &quot;toggle_schedule_api_saved_messages__identifier__schedule_patch&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/ScheduleEnabled&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/saved-messages</summary><pre><code>{
+  &quot;summary&quot;: &quot;List Saved&quot;,
+  &quot;operationId&quot;: &quot;list_saved_api_saved_messages_get&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>POST /api/saved-messages</summary><pre><code>{
+  &quot;summary&quot;: &quot;Create Saved&quot;,
+  &quot;operationId&quot;: &quot;create_saved_api_saved_messages_post&quot;,
+  &quot;requestBody&quot;: {
+    &quot;content&quot;: {
+      &quot;multipart/form-data&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Body_create_saved_api_saved_messages_post&quot;
+        }
+      }
+    },
+    &quot;required&quot;: true
+  },
+  &quot;responses&quot;: {
+    &quot;201&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>GET /api/saved-messages/{identifier}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Read Saved&quot;,
+  &quot;operationId&quot;: &quot;read_saved_api_saved_messages__identifier__get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>PUT /api/saved-messages/{identifier}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Edit Saved&quot;,
+  &quot;operationId&quot;: &quot;edit_saved_api_saved_messages__identifier__put&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;multipart/form-data&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Body_edit_saved_api_saved_messages__identifier__put&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>DELETE /api/saved-messages/{identifier}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Delete Saved&quot;,
+  &quot;operationId&quot;: &quot;delete_saved_api_saved_messages__identifier__delete&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/saved-messages/{identifier}/photo</summary><pre><code>{
+  &quot;summary&quot;: &quot;Saved Photo&quot;,
+  &quot;operationId&quot;: &quot;saved_photo_api_saved_messages__identifier__photo_get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/saved-messages/{identifier}/send</summary><pre><code>{
+  &quot;summary&quot;: &quot;Enqueue Saved&quot;,
+  &quot;operationId&quot;: &quot;enqueue_saved_api_saved_messages__identifier__send_post&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;202&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/send-runs</summary><pre><code>{
+  &quot;summary&quot;: &quot;List Send Runs&quot;,
+  &quot;operationId&quot;: &quot;list_send_runs_api_send_runs_get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;limit&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;maximum&quot;: 100,
+        &quot;minimum&quot;: 1,
+        &quot;default&quot;: 30,
+        &quot;title&quot;: &quot;Limit&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/send-runs/{identifier}/cancel</summary><pre><code>{
+  &quot;summary&quot;: &quot;Cancel Run&quot;,
+  &quot;operationId&quot;: &quot;cancel_run_api_send_runs__identifier__cancel_post&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/schedule/preview</summary><pre><code>{
+  &quot;summary&quot;: &quot;Preview Schedule&quot;,
+  &quot;operationId&quot;: &quot;preview_schedule_api_schedule_preview_post&quot;,
+  &quot;requestBody&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Schedule&quot;
+        }
+      }
+    },
+    &quot;required&quot;: true
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>GET /api/updates</summary><pre><code>{
+  &quot;summary&quot;: &quot;Updates&quot;,
+  &quot;operationId&quot;: &quot;updates_api_updates_get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;after&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;minimum&quot;: 0,
+        &quot;default&quot;: 0,
+        &quot;title&quot;: &quot;After&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;limit&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;maximum&quot;: 500,
+        &quot;minimum&quot;: 1,
+        &quot;default&quot;: 100,
+        &quot;title&quot;: &quot;Limit&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/source/{chat_id}/{message_id}/photo/{index}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Import Photo&quot;,
+  &quot;operationId&quot;: &quot;import_photo_api_source__chat_id___message_id__photo__index__get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;chat_id&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;message_id&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Message Id&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;index&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Index&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/source/resolve</summary><pre><code>{
+  &quot;summary&quot;: &quot;Resolve Source&quot;,
+  &quot;operationId&quot;: &quot;resolve_source_api_source_resolve_post&quot;,
+  &quot;requestBody&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/SourceRef&quot;
+        }
+      }
+    },
+    &quot;required&quot;: true
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>GET /api/relays</summary><pre><code>{
+  &quot;summary&quot;: &quot;List Relays&quot;,
+  &quot;operationId&quot;: &quot;list_relays_api_relays_get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;include_jobs&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;default&quot;: false,
+        &quot;title&quot;: &quot;Include Jobs&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;limit&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;maximum&quot;: 500,
+        &quot;minimum&quot;: 1,
+        &quot;default&quot;: 100,
+        &quot;title&quot;: &quot;Limit&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/relays</summary><pre><code>{
+  &quot;summary&quot;: &quot;Create Relay&quot;,
+  &quot;operationId&quot;: &quot;create_relay_api_relays_post&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/AutoRelay&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>PUT /api/relays/{identifier}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Update Relay&quot;,
+  &quot;operationId&quot;: &quot;update_relay_api_relays__identifier__put&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/AutoRelay&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>DELETE /api/relays/{identifier}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Delete Relay&quot;,
+  &quot;operationId&quot;: &quot;delete_relay_api_relays__identifier__delete&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>PATCH /api/relays/{identifier}/enabled</summary><pre><code>{
+  &quot;summary&quot;: &quot;Toggle Relay&quot;,
+  &quot;operationId&quot;: &quot;toggle_relay_api_relays__identifier__enabled_patch&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;identifier&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Identifier&quot;
+      }
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/ScheduleEnabled&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/history/{chat_id}</summary><pre><code>{
+  &quot;summary&quot;: &quot;History&quot;,
+  &quot;operationId&quot;: &quot;history_api_history__chat_id__get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;chat_id&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;before&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;minimum&quot;: 0,
+        &quot;default&quot;: 0,
+        &quot;title&quot;: &quot;Before&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;limit&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;maximum&quot;: 100,
+        &quot;minimum&quot;: 1,
+        &quot;default&quot;: 50,
+        &quot;title&quot;: &quot;Limit&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>GET /api/inbox/chats</summary><pre><code>{
+  &quot;summary&quot;: &quot;Inbox Chats&quot;,
+  &quot;operationId&quot;: &quot;inbox_chats_api_inbox_chats_get&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  },
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ]
+}</code></pre></details><details><summary>GET /api/inbox/{chat_id}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Inbox Messages&quot;,
+  &quot;operationId&quot;: &quot;inbox_messages_api_inbox__chat_id__get&quot;,
+  &quot;security&quot;: [
+    {
+      &quot;HTTPBearer&quot;: []
+    }
+  ],
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;chat_id&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;before&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;minimum&quot;: 0,
+        &quot;default&quot;: 0,
+        &quot;title&quot;: &quot;Before&quot;
+      }
+    },
+    {
+      &quot;name&quot;: &quot;limit&quot;,
+      &quot;in&quot;: &quot;query&quot;,
+      &quot;required&quot;: false,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;maximum&quot;: 100,
+        &quot;minimum&quot;: 1,
+        &quot;default&quot;: 50,
+        &quot;title&quot;: &quot;Limit&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>Модели Tenant API</summary><pre class="schema"><code>{
+  &quot;AutoRelay&quot;: {
+    &quot;properties&quot;: {
+      &quot;title&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 150,
+        &quot;minLength&quot;: 1,
+        &quot;title&quot;: &quot;Title&quot;
+      },
+      &quot;destination&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Destination&quot;
+      },
+      &quot;source_chat_ids&quot;: {
+        &quot;items&quot;: {
+          &quot;type&quot;: &quot;integer&quot;
+        },
+        &quot;type&quot;: &quot;array&quot;,
+        &quot;maxItems&quot;: 100,
+        &quot;minItems&quot;: 1,
+        &quot;title&quot;: &quot;Source Chat Ids&quot;
+      },
+      &quot;interval&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;maximum&quot;: 30,
+        &quot;minimum&quot;: 5,
+        &quot;title&quot;: &quot;Interval&quot;,
+        &quot;default&quot;: 5
+      },
+      &quot;enabled&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;title&quot;: &quot;Enabled&quot;,
+        &quot;default&quot;: false
+      },
+      &quot;mode&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;enum&quot;: [
+          &quot;forward&quot;,
+          &quot;copy&quot;
+        ],
+        &quot;title&quot;: &quot;Mode&quot;,
+        &quot;default&quot;: &quot;copy&quot;
+      },
+      &quot;add_source&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;title&quot;: &quot;Add Source&quot;,
+        &quot;default&quot;: true
+      },
+      &quot;link_target&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;enum&quot;: [
+          &quot;chat&quot;,
+          &quot;message&quot;
+        ],
+        &quot;title&quot;: &quot;Link Target&quot;,
+        &quot;default&quot;: &quot;chat&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;title&quot;,
+      &quot;destination&quot;,
+      &quot;source_chat_ids&quot;
+    ],
+    &quot;title&quot;: &quot;AutoRelay&quot;
+  },
+  &quot;Body_create_saved_api_saved_messages_post&quot;: {
+    &quot;properties&quot;: {
+      &quot;payload&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Payload&quot;
+      },
+      &quot;photo&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;type&quot;: &quot;string&quot;,
+            &quot;format&quot;: &quot;binary&quot;
+          },
+          {
+            &quot;type&quot;: &quot;null&quot;
+          }
+        ],
+        &quot;title&quot;: &quot;Photo&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;payload&quot;
+    ],
+    &quot;title&quot;: &quot;Body_create_saved_api_saved_messages_post&quot;
+  },
+  &quot;Body_edit_saved_api_saved_messages__identifier__put&quot;: {
+    &quot;properties&quot;: {
+      &quot;payload&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Payload&quot;
+      },
+      &quot;photo&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;type&quot;: &quot;string&quot;,
+            &quot;format&quot;: &quot;binary&quot;
+          },
+          {
+            &quot;type&quot;: &quot;null&quot;
+          }
+        ],
+        &quot;title&quot;: &quot;Photo&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;payload&quot;
+    ],
+    &quot;title&quot;: &quot;Body_edit_saved_api_saved_messages__identifier__put&quot;
+  },
+  &quot;Body_send_photo_api_messages_photo_post&quot;: {
+    &quot;properties&quot;: {
+      &quot;chat_id&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      },
+      &quot;photo&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;format&quot;: &quot;binary&quot;,
+        &quot;title&quot;: &quot;Photo&quot;
+      },
+      &quot;text&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 4000,
+        &quot;title&quot;: &quot;Text&quot;,
+        &quot;default&quot;: &quot;&quot;
+      },
+      &quot;reply_to&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;type&quot;: &quot;integer&quot;
+          },
+          {
+            &quot;type&quot;: &quot;null&quot;
+          }
+        ],
+        &quot;title&quot;: &quot;Reply To&quot;
+      },
+      &quot;notify&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;title&quot;: &quot;Notify&quot;,
+        &quot;default&quot;: true
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;chat_id&quot;,
+      &quot;photo&quot;
+    ],
+    &quot;title&quot;: &quot;Body_send_photo_api_messages_photo_post&quot;
+  },
+  &quot;Favorite&quot;: {
+    &quot;properties&quot;: {
+      &quot;title&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 500,
+        &quot;title&quot;: &quot;Title&quot;,
+        &quot;default&quot;: &quot;&quot;
+      },
+      &quot;type&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 40,
+        &quot;title&quot;: &quot;Type&quot;,
+        &quot;default&quot;: &quot;CHAT&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;title&quot;: &quot;Favorite&quot;
+  },
+  &quot;HTTPValidationError&quot;: {
+    &quot;properties&quot;: {
+      &quot;detail&quot;: {
+        &quot;items&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/ValidationError&quot;
+        },
+        &quot;type&quot;: &quot;array&quot;,
+        &quot;title&quot;: &quot;Detail&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;title&quot;: &quot;HTTPValidationError&quot;
+  },
+  &quot;Password&quot;: {
+    &quot;properties&quot;: {
+      &quot;password&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 1024,
+        &quot;minLength&quot;: 1,
+        &quot;title&quot;: &quot;Password&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;password&quot;
+    ],
+    &quot;title&quot;: &quot;Password&quot;
+  },
+  &quot;Schedule&quot;: {
+    &quot;properties&quot;: {
+      &quot;cron&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 100,
+        &quot;minLength&quot;: 1,
+        &quot;title&quot;: &quot;Cron&quot;
+      },
+      &quot;timezone&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 100,
+        &quot;title&quot;: &quot;Timezone&quot;,
+        &quot;default&quot;: &quot;Asia/Anadyr&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;cron&quot;
+    ],
+    &quot;title&quot;: &quot;Schedule&quot;
+  },
+  &quot;ScheduleEnabled&quot;: {
+    &quot;properties&quot;: {
+      &quot;enabled&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;title&quot;: &quot;Enabled&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;enabled&quot;
+    ],
+    &quot;title&quot;: &quot;ScheduleEnabled&quot;
+  },
+  &quot;Send&quot;: {
+    &quot;properties&quot;: {
+      &quot;chat_id&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      },
+      &quot;text&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 4000,
+        &quot;minLength&quot;: 1,
+        &quot;title&quot;: &quot;Text&quot;
+      },
+      &quot;reply_to&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;type&quot;: &quot;integer&quot;
+          },
+          {
+            &quot;type&quot;: &quot;null&quot;
+          }
+        ],
+        &quot;title&quot;: &quot;Reply To&quot;
+      },
+      &quot;notify&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;title&quot;: &quot;Notify&quot;,
+        &quot;default&quot;: true
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;chat_id&quot;,
+      &quot;text&quot;
+    ],
+    &quot;title&quot;: &quot;Send&quot;
+  },
+  &quot;SourceRef&quot;: {
+    &quot;properties&quot;: {
+      &quot;chat_id&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;title&quot;: &quot;Chat Id&quot;
+      },
+      &quot;message_id&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;type&quot;: &quot;integer&quot;,
+            &quot;maximum&quot;: 18446744073709552000,
+            &quot;minimum&quot;: 1
+          },
+          {
+            &quot;type&quot;: &quot;null&quot;
+          }
+        ],
+        &quot;title&quot;: &quot;Message Id&quot;
+      },
+      &quot;url&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 2048,
+        &quot;title&quot;: &quot;Url&quot;,
+        &quot;default&quot;: &quot;&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;chat_id&quot;
+    ],
+    &quot;title&quot;: &quot;SourceRef&quot;
+  },
+  &quot;ValidationError&quot;: {
+    &quot;properties&quot;: {
+      &quot;loc&quot;: {
+        &quot;items&quot;: {
+          &quot;anyOf&quot;: [
+            {
+              &quot;type&quot;: &quot;string&quot;
+            },
+            {
+              &quot;type&quot;: &quot;integer&quot;
+            }
+          ]
+        },
+        &quot;type&quot;: &quot;array&quot;,
+        &quot;title&quot;: &quot;Location&quot;
+      },
+      &quot;msg&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Message&quot;
+      },
+      &quot;type&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Error Type&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;loc&quot;,
+      &quot;msg&quot;,
+      &quot;type&quot;
+    ],
+    &quot;title&quot;: &quot;ValidationError&quot;
+  }
+}</code></pre></details><h3>Администрирование</h3><details><summary>GET /api/admin/users</summary><pre><code>{
+  &quot;summary&quot;: &quot;Users&quot;,
+  &quot;operationId&quot;: &quot;users_api_admin_users_get&quot;,
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/admin/users</summary><pre><code>{
+  &quot;summary&quot;: &quot;Create&quot;,
+  &quot;operationId&quot;: &quot;create_api_admin_users_post&quot;,
+  &quot;requestBody&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/UserChange&quot;
+        }
+      }
+    },
+    &quot;required&quot;: true
+  },
+  &quot;responses&quot;: {
+    &quot;201&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>PATCH /api/admin/users/{uid}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Rename&quot;,
+  &quot;operationId&quot;: &quot;rename_api_admin_users__uid__patch&quot;,
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;uid&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Uid&quot;
+      }
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/UserChange&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>DELETE /api/admin/users/{uid}</summary><pre><code>{
+  &quot;summary&quot;: &quot;Delete&quot;,
+  &quot;operationId&quot;: &quot;delete_api_admin_users__uid__delete&quot;,
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;uid&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Uid&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>POST /api/admin/users/{uid}/key</summary><pre><code>{
+  &quot;summary&quot;: &quot;Rotate&quot;,
+  &quot;operationId&quot;: &quot;rotate_api_admin_users__uid__key_post&quot;,
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;uid&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Uid&quot;
+      }
+    }
+  ],
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>PATCH /api/admin/users/{uid}/enabled</summary><pre><code>{
+  &quot;summary&quot;: &quot;Enabled&quot;,
+  &quot;operationId&quot;: &quot;enabled_api_admin_users__uid__enabled_patch&quot;,
+  &quot;parameters&quot;: [
+    {
+      &quot;name&quot;: &quot;uid&quot;,
+      &quot;in&quot;: &quot;path&quot;,
+      &quot;required&quot;: true,
+      &quot;schema&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Uid&quot;
+      }
+    }
+  ],
+  &quot;requestBody&quot;: {
+    &quot;required&quot;: true,
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/Enabled&quot;
+        }
+      }
+    }
+  },
+  &quot;responses&quot;: {
+    &quot;200&quot;: {
+      &quot;description&quot;: &quot;Successful Response&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {}
+        }
+      }
+    },
+    &quot;422&quot;: {
+      &quot;description&quot;: &quot;Validation Error&quot;,
+      &quot;content&quot;: {
+        &quot;application/json&quot;: {
+          &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+          }
+        }
+      }
+    }
+  }
+}</code></pre></details><details><summary>Модели Администрирование</summary><pre class="schema"><code>{
+  &quot;Enabled&quot;: {
+    &quot;properties&quot;: {
+      &quot;enabled&quot;: {
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;title&quot;: &quot;Enabled&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;enabled&quot;
+    ],
+    &quot;title&quot;: &quot;Enabled&quot;
+  },
+  &quot;HTTPValidationError&quot;: {
+    &quot;properties&quot;: {
+      &quot;detail&quot;: {
+        &quot;items&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/ValidationError&quot;
+        },
+        &quot;type&quot;: &quot;array&quot;,
+        &quot;title&quot;: &quot;Detail&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;title&quot;: &quot;HTTPValidationError&quot;
+  },
+  &quot;UserChange&quot;: {
+    &quot;properties&quot;: {
+      &quot;name&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;maxLength&quot;: 100,
+        &quot;minLength&quot;: 1,
+        &quot;title&quot;: &quot;Name&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;name&quot;
+    ],
+    &quot;title&quot;: &quot;UserChange&quot;
+  },
+  &quot;ValidationError&quot;: {
+    &quot;properties&quot;: {
+      &quot;loc&quot;: {
+        &quot;items&quot;: {
+          &quot;anyOf&quot;: [
+            {
+              &quot;type&quot;: &quot;string&quot;
+            },
+            {
+              &quot;type&quot;: &quot;integer&quot;
+            }
+          ]
+        },
+        &quot;type&quot;: &quot;array&quot;,
+        &quot;title&quot;: &quot;Location&quot;
+      },
+      &quot;msg&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Message&quot;
+      },
+      &quot;type&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;title&quot;: &quot;Error Type&quot;
+      }
+    },
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;required&quot;: [
+      &quot;loc&quot;,
+      &quot;msg&quot;,
+      &quot;type&quot;
+    ],
+    &quot;title&quot;: &quot;ValidationError&quot;
+  }
+}</code></pre></details></section><p class="footer">MAX Account API Wiki v1.0.0 · Проверено по исходному коду API v1.11.0 · 27.09.2026<br>Three.js 0.180.0, MIT. Wiki не хранит ключи и не отправляет сообщения.</p><section class="doc"><h2>API v1.11.1: сессии</h2><p>POST /api/auth/stop сохраняет отключение после перезапуска; POST /api/auth/start возобновляет вход. POST /api/auth/logout завершает текущую сессию и удаляет локальные данные входа. remote_revoked=false означает, что отзыв устройства в MAX не подтверждён. Обновление одной командой и детали — в <a href="WIKI.md">WIKI.md</a>.</p></section></main></div></body></html>

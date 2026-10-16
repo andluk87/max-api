@@ -1,0 +1,3 @@
+max-api.example.com {
+    reverse_proxy max-api:8087
+}

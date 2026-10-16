@@ -1,0 +1,6 @@
+**/.env
+**/bot.env
+**/*.sqlite
+**/*.db
+**/__pycache__
+.git
