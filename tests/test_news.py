@@ -265,13 +265,13 @@ def test_source_hashtags_and_clickable_source_in_max():
     from app.news import extract_hashtags, format_post
     from bs4 import BeautifulSoup
     from pymax.formatting.markdown import Formatter
-    soup = BeautifulSoup('<meta name="keywords" content="Новости, Погода, Прогноз погоды"><meta property="article:tag" content="Погода"><a class="article__tag-item">#Прогноз погоды</a>', 'html.parser')
+    soup = BeautifulSoup('<meta name="keywords" content="Новости, Погода, Прогноз погоды"><meta property="article:tag" content="Погода"><a class="article__tag-item">Погода</a><a class="article__tag-item">#Прогноз погоды</a><a class="article__tag-item">Погода</a>', 'html.parser')
     tags = extract_hashtags(soup)
-    assert tags == ['#Новости', '#Погода', '#Прогнозпогоды']
+    assert tags == ['#Погода', '#Прогнозпогоды']
     url = 'https://www.mk-chukotka.ru/social/2026/11/01/news.html'
     data = {'ai_title':'Погода на Чукотке','summary':'В воскресенье ожидается снег.','source':'МК на Чукотке','hashtags':tags}
     text = format_post(data,url)
-    assert text.endswith('#Новости #Погода #Прогнозпогоды')
+    assert text.endswith('#Погода #Прогнозпогоды')
     plain, entities = Formatter.format_markdown(text)
     links = [e for e in entities if e.type == 'LINK']
     assert len(links) == 1
@@ -284,7 +284,7 @@ def test_source_hashtags_and_clickable_source_in_max():
 def test_hashtags_extracted_with_article():
     text = 'В воскресенье на Чукотке ожидается снег. ' * 8
     raw = '<h1>Погода</h1><meta name="keywords" content="Погода, Чукотка"><article><p>'+text+'</p></article><a class="article__tag-item">Чукотка</a>'
-    assert article(raw,'https://example.org/news.html')['hashtags'] == ['#Погода','#Чукотка']
+    assert article(raw,'https://example.org/news.html')['hashtags'] == ['#Чукотка']
 
 
 @pytest.mark.parametrize('status', ['draft', 'published'])
@@ -300,7 +300,7 @@ def test_refresh_tags_keeps_ready_summary_without_ai(tmp_path,status):
         original = {'title':'Оригинал','ai_title':'Заголовок ИИ','summary':'Готовый пересказ','manual_only':True,'source':'МК на Чукотке'}
         with sqlite3.connect(tmp_path/'news.sqlite') as db:
             db.execute("INSERT INTO articles VALUES (1,'https://example.org/article.html',?,?,0,NULL)",(json.dumps(original),status))
-        gateway.news.request = AsyncMock(return_value=b'<meta name="keywords" content="Weather">')
+        gateway.news.request = AsyncMock(return_value=b'<meta name="keywords" content="Economy"><a class="article__tag-item">Weather</a>')
         gateway.news.generate = AsyncMock(side_effect=AssertionError('AI must not run'))
         response = client.post('/api/news/article/1/refresh-tags',headers=HEADERS)
         assert response.status_code == 200
@@ -312,3 +312,10 @@ def test_refresh_tags_keeps_ready_summary_without_ai(tmp_path,status):
         if status == 'published':
             assert client.post('/api/news/article/1/regenerate',headers=HEADERS).status_code == 422
         gateway.news.generate.assert_not_awaited()
+
+
+def test_keywords_and_section_do_not_become_hashtags():
+    from app.news import extract_hashtags
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup('<meta name="keywords" content="Экономика, Россия"><meta property="article:section" content="Экономика"><meta property="article:tag" content="Россия"><a rel="tag">Навигация</a>', 'html.parser')
+    assert extract_hashtags(soup) == []

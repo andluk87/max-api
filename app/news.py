@@ -3,7 +3,6 @@ import asyncio
 import contextlib
 import json
 import os
-import re
 import sqlite3
 import time
 from urllib.parse import urljoin, urlparse
@@ -113,10 +112,8 @@ class Edit(BaseModel):
 
 def extract_hashtags(soup):
     topics = []
-    for meta in soup.select('meta[name="keywords"], meta[property="article:section"], meta[property="article:tag"]'):
-        topics.extend(re.split(r'[,;]', meta.get('content', '')))
-    for tag in soup.select('.article__tag-item, .article__tags a, a[rel~="tag"], [itemprop="keywords"]'):
-        topics.append(tag.get('content') or tag.get_text(' ', strip=True))
+    for tag in soup.select('.article__tag-item, .article__tags a'):
+        topics.append(tag.get_text(' ', strip=True))
     output, seen = [], set()
     for topic in topics:
         # Join words into one hashtag; omit Markdown markers and punctuation.
