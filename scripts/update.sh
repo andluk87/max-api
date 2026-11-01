@@ -23,23 +23,27 @@ else
   mkdir -p .update-backups
   backup=".update-backups/$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz"
   files=(app)
-  for item in wiki scripts tests examples Dockerfile requirements.txt requirements-dev.txt setup.py VERSION README.md CHANGELOG.md .gitignore .dockerignore; do
+  for item in wiki scripts tests examples Dockerfile requirements.txt requirements-dev.txt setup.py VERSION README.md CHANGELOG.md .gitignore .dockerignore compose.news.yaml; do
     [[ ! -e "$item" ]] || files+=("$item")
   done
   tar -czf "$backup" -- "${files[@]}"
   echo "Source backup: $backup"
-  for item in app wiki scripts tests examples Dockerfile requirements.txt requirements-dev.txt setup.py VERSION README.md CHANGELOG.md .gitignore .dockerignore; do
+  for item in app wiki scripts tests examples Dockerfile requirements.txt requirements-dev.txt setup.py VERSION README.md CHANGELOG.md .gitignore .dockerignore compose.news.yaml; do
     cp -a "$stage/source/$item" .
   done
 fi
-docker compose up -d --build --force-recreate
+compose=(docker compose -f compose.yaml -f compose.news.yaml)
+"${compose[@]}" config --quiet
+"${compose[@]}" up -d --build --force-recreate
+echo 'Загрузка локальной модели Qwen для ИИ-парсера (первый запуск может занять несколько минут)...'
+"${compose[@]}" exec -T ollama ollama pull qwen2.5:3b
 for attempt in {1..30}; do
-  if docker compose exec -T max-api python -c "import urllib.request; import json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8087/healthz', timeout=3)) == {'ok': True}" 2>/dev/null; then
+  if "${compose[@]}" exec -T max-api python -c "import urllib.request; import json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8087/healthz', timeout=3)) == {'ok': True}" 2>/dev/null; then
     echo 'MAX API updated; healthz OK. Refresh the browser with Ctrl+F5.'
     exit 0
   fi
   sleep 2
 done
-docker compose ps
+"${compose[@]}" ps
 echo 'Readiness failed; inspect docker compose logs --tail=100 max-api.' >&2
 exit 1
