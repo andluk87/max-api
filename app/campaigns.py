@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from pymax import Photo
 from .diagnostics import emit, request_context
 from .uploads import PhotoUploadError
+from .delivery import send_message
 
 
 def next_occurrence(expression, timezone, after):
@@ -303,10 +304,8 @@ class Engine:
                 db.execute("UPDATE deliveries SET state='sending',updated=? WHERE run_id=? AND position=?", (self.store.clock(),run['id'],item['position']))
             state, message_id, error = 'sent', None, None
             try:
-                kwargs = dict(chat_id=int(item['chat_id']), text=config['text'] or None, notify=config['notify'])
-                if run['photo'] is not None:
-                    kwargs['attachments'] = [Photo(raw=run['photo'],name=run['photo_name'])]
-                result = await asyncio.wait_for(s.client.send_message(**kwargs), timeout=120 if run['photo'] is not None else 30)
+                attachments = [Photo(raw=run['photo'], name=run['photo_name'])] if run['photo'] is not None else None
+                result = await send_message(s, item['chat_id'], config['text'], notify=config['notify'], attachments=attachments)
                 message_id = str(result.id)
             except asyncio.CancelledError:
                 state, error = 'unknown', 'Остановка сервера во время отправки; результат неизвестен'

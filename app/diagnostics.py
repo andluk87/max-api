@@ -11,7 +11,7 @@ from pathlib import Path
 
 request_context=ContextVar("diagnostic_request",default=None)
 LIMIT=5000
-FIELDS={'request_id','method','route','status','duration_ms','operation','run_id','rule_id','job_id','state'}
+FIELDS={'request_id','method','route','status','duration_ms','operation','account_id','chat_id','run_id','rule_id','job_id','state'}
 
 
 def upstream_error(exception):

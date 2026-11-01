@@ -100,3 +100,19 @@ def test_denied_test_send_has_actionable_error(tmp_path):
         assert response.status_code == 403
         assert 'chat.denied' in response.json()['detail']
         assert 'аккаунт' in response.json()['detail']
+
+
+def test_news_uses_editor_transport_parameters(tmp_path):
+    from app.delivery import send_message
+    async def run():
+        message = SimpleNamespace(model_dump=lambda **kwargs: {'id': 42})
+        client = SimpleNamespace(send_message=AsyncMock(return_value=message), me=SimpleNamespace(contact=SimpleNamespace(id=9001)))
+        service = SimpleNamespace(client=client, directory=tmp_path, send_lock=asyncio.Lock(), ready=lambda: True)
+        n = News(tmp_path, lambda: service)
+        await send_message(service, -79387375605133, 'Тест')
+        editor_kwargs = client.send_message.call_args.kwargs
+        await n.send(-79387375605133, 'Тест')
+        assert client.send_message.call_args.kwargs == editor_kwargs
+        assert editor_kwargs == {'chat_id': -79387375605133, 'text': 'Тест', 'notify': True}
+        await n.close()
+    asyncio.run(run())

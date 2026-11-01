@@ -57,7 +57,7 @@ def create_app(service=None, api_key=None, run_scheduler=True, restore_session=T
             await s.stop()
             s.db.close()
 
-    app = FastAPI(title='MAX User Account API', version='1.12.0', lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title='MAX User Account API', version='1.12.1', lifespan=lifespan, docs_url=None, redoc_url=None)
 
     async def auth(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
         if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), key.encode()):

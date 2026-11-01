@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from pymax.exceptions import ApiError
 from .diagnostics import emit
+from .delivery import send_message
 
 
 class Settings(BaseModel):
@@ -171,7 +172,7 @@ class News:
         service = self.service()
         attachments = [await asyncio.to_thread(make_photo, photo)] if photo else []
         async with service.send_lock:
-            result = await asyncio.wait_for(service.client.send_message(chat_id=chat_id, text=text, notify=True, attachments=attachments), timeout=120 if photo else 30)
+            result = await send_message(service, chat_id, text, attachments=attachments, operation='news')
         return wire(result.model_dump(mode='python'))
 
     async def generate(self, data):
