@@ -13,6 +13,8 @@ import aiohttp
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
+from pymax.exceptions import ApiError
+from .diagnostics import emit
 
 
 class Settings(BaseModel):
@@ -264,6 +266,13 @@ class News:
                     raise ValueError('MAX не подтвердил идентификатор сообщения')
                 self.db.execute("UPDATE deliveries SET status='sent',mid=? WHERE article_id=? AND chat_id=?", (mid, ident, target['chat_id']))
                 self.db.execute("UPDATE articles SET status='published' WHERE id=?", (ident,))
+            except ApiError as exc:
+                denied = exc.error == 'chat.denied'
+                status = 'failed' if denied else 'unknown'
+                message = 'MAX запретил отправку: проверьте права подключённого аккаунта в этом чате (chat.denied)' if denied else 'MAX не подтвердил отправку; проверьте чат перед повтором'
+                self.db.execute('UPDATE deliveries SET status=?,error=? WHERE article_id=? AND chat_id=?', (status, message, ident, target['chat_id']))
+                self.log(message)
+                emit(self.directory, 'news_send_failed', 'ERROR', exception=exc)
             except Exception as exc:
                 self.db.execute("UPDATE deliveries SET status='unknown',error=? WHERE article_id=? AND chat_id=?", (str(exc), ident, target['chat_id']))
                 self.log('Отправка не подтверждена: ' + str(exc))
@@ -323,6 +332,11 @@ def install(gateway):
         try:
             async with module().lock:
                 return await operation()
+        except ApiError as exc:
+            emit(module().directory, 'news_max_rejected', 'WARNING', exception=exc)
+            if exc.error == 'chat.denied':
+                raise HTTPException(403, 'MAX запретил отправку в выбранный чат (chat.denied). Проверьте, что подключён нужный аккаунт, он состоит в группе или канале и имеет право публикации.') from exc
+            raise HTTPException(502, 'MAX отклонил запрос. Проверьте журнал модуля и права подключённого аккаунта.') from exc
         except (ValueError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise HTTPException(422, str(exc)) from exc
 

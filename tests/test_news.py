@@ -82,3 +82,20 @@ def test_admin_only_and_settings_persist(tmp_path):
         state = client.get('/api/admin/news', headers=HEADERS).json()
         assert state['settings']['enabled'] is True
         assert state['settings']['paused'] is True
+
+
+def test_denied_test_send_has_actionable_error(tmp_path):
+    from fastapi.testclient import TestClient
+    from app.gateway import Gateway
+    from app.main import create_app
+    from pymax.exceptions import ApiError
+    from test_api import KEY, HEADERS
+    gateway = Gateway(create_app, tmp_path, KEY, run_scheduler=False)
+    with TestClient(gateway) as client:
+        gateway.news.db.execute("INSERT INTO destinations VALUES (123, 'Канал', 1, 0)")
+        gateway.news.db.commit()
+        gateway.news.send = AsyncMock(side_effect=ApiError(opcode=64, error='chat.denied'))
+        response = client.post('/api/admin/news/destination/123/test', headers=HEADERS)
+        assert response.status_code == 403
+        assert 'chat.denied' in response.json()['detail']
+        assert 'аккаунт' in response.json()['detail']
