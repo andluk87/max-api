@@ -6,6 +6,12 @@ if [[ ! -f compose.yaml || ! -f compose.news.yaml ]]; then
   exit 1
 fi
 compose=(docker compose -f compose.yaml -f compose.news.yaml)
+# Preserve local fixes for Docker build DNS and the runtime network.
+for override in compose.build-network.yaml compose.host-network.yaml; do
+  if [[ -f "$override" ]]; then
+    compose+=(-f "$override")
+  fi
+done
 "${compose[@]}" config --quiet
 "${compose[@]}" up -d --build
 bash scripts/pull-news-model.sh

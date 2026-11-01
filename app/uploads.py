@@ -9,6 +9,8 @@ from pymax.api.uploads.models import PhotoUploadResponse
 from pymax.api.uploads.payloads import AttachPhotoPayload, UploadPayload
 from pymax.exceptions import UploadError
 from pymax.protocol import Opcode
+from pymax.transport.websocket import WebSocketTransport
+from .transport import connect_websocket
 
 
 class PhotoUploadError(UploadError):
@@ -68,6 +70,9 @@ async def upload_photo(self, photo, profile=False):
 class CompatibleWebClient(WebClient):
     def _build_app(self):
         app = super()._build_app()
+        transport = getattr(getattr(app, 'connection', None), 'transport', None)
+        if isinstance(transport, WebSocketTransport):
+            transport.connect = MethodType(connect_websocket, transport)
         # Apply on every runtime creation, including reconnects. Other upload
         # methods and their registered event handlers remain PyMax's originals.
         app.api.uploads.upload_photo = MethodType(upload_photo, app.api.uploads)
