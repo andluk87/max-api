@@ -41,11 +41,15 @@ for override in compose.build-network.yaml compose.host-network.yaml; do
 done
 "${compose[@]}" config --quiet
 "${compose[@]}" up -d --build --force-recreate
-echo 'Загрузка локальной модели Qwen для ИИ-парсера (первый запуск может занять несколько минут)...'
 model_ready=true
-if ! bash scripts/pull-news-model.sh; then
-  model_ready=false
-  echo 'Обновление сервиса продолжается. ИИ-пересказ недоступен до загрузки модели.' >&2
+if [[ "${NEWS_SKIP_MODEL_PULL:-0}" == 1 ]]; then
+  echo 'Загрузка локальной модели пропущена (NEWS_SKIP_MODEL_PULL=1).'
+else
+  echo 'Загрузка локальной модели Qwen для ИИ-парсера (первый запуск может занять несколько минут)...'
+  if ! bash scripts/pull-news-model.sh; then
+    model_ready=false
+    echo 'Обновление сервиса продолжается. Локальный пересказ недоступен до загрузки модели; Яндекс настраивается отдельно.' >&2
+  fi
 fi
 for attempt in {1..30}; do
   if "${compose[@]}" exec -T max-api python -c "import urllib.request; import json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8087/healthz', timeout=3)) == {'ok': True}" 2>/dev/null; then

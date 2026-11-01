@@ -131,7 +131,7 @@ def test_news_module_grants_isolation_revocation_and_persistence(tmp_path):
         ah = {'Authorization':'Bearer '+a['api_key']}
         bh = {'Authorization':'Bearer '+b['api_key']}
         assert client.get('/api/whoami', headers=ah).json()['modules']['news'] is False
-        for method, path, body in [('GET','/api/news',None),('POST','/api/news/check',None),('POST','/api/news/import-latest',None),('PUT','/api/news/settings',{'enabled':True})]:
+        for method, path, body in [('GET','/api/news',None),('GET','/api/news/archive?day=2026-10-30',None),('POST','/api/news/check',None),('POST','/api/news/import-latest',None),('PUT','/api/news/settings',{'enabled':True})]:
             assert client.request(method,path,headers=ah,json=body).status_code == 403
         path = '/api/admin/users/'+uid+'/modules/news'
         assert client.patch(path,headers=ah,json={'enabled':True}).status_code == 403
