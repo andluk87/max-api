@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -83,8 +84,8 @@ class Settings(BaseModel):
     @field_validator('interval')
     @classmethod
     def interval_valid(cls, value):
-        if value not in (5, 10, 15, 30, 60):
-            raise ValueError('Допустимо 5, 10, 15, 30, 60 минут')
+        if value != 15:
+            raise ValueError('Проверка источника выполняется каждые 15 минут')
         return value
 
     @field_validator('source', 'ollama')
@@ -142,12 +143,39 @@ def extract_hashtags(soup):
     return output
 
 
-def format_post(data, url):
+def photo_author(soup):
+    caption = (soup.select_one('.article__picture-description')
+               or soup.select_one('.article__picture-caption [itemprop="caption"]')
+               or soup.select_one('.article__picture-caption')
+               or soup.select_one('article figure figcaption'))
+    value = caption.get_text(' ', strip=True) if caption else ''
+    if not value:
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                payload = json.loads(script.string or script.get_text())
+                objects = payload if isinstance(payload, list) else [payload]
+                for item in objects:
+                    if not isinstance(item, dict) or item.get('@type') not in ('NewsArticle', 'Article'):
+                        continue
+                    image = item.get('image')
+                    if isinstance(image, dict) and isinstance(image.get('caption'), str):
+                        value = image['caption']
+                        break
+            except (ValueError, TypeError):
+                continue
+            if value:
+                break
+    value = re.sub(r'^\s*(?:📸\s*)?(?:фото|фотография)\s*[:：]\s*', '', value, flags=re.I)
+    return ' '.join(value.split())[:500]
+
+
+def format_post(data, url, photo_attached=False):
     source = data.get('source') or 'МК на Чукотке'
     source = source.replace('[', '').replace(']', '')
     url = url.replace('(', '%28').replace(')', '%29')
-    text = '**' + data['ai_title'] + '**\n\n' + data['summary']
-    text += '\n\n🔗 Источник: [' + source + '](' + url + ')'
+    credit = '📸 Фото: ' + data['photo_author'] + '\n\n' if photo_attached and data.get('photo_author') else ''
+    text = credit + '**' + data['ai_title'] + '**\n\n' + data['summary']
+    text += '\n\nПодробности на сайте: [' + source + '](' + url + ')'
     tags = data.get('hashtags', [])
     if tags:
         text += '\n\n' + ' '.join(tags)
@@ -172,11 +200,12 @@ def article(raw, url):
         raise ValueError('Недостаточно текста для пересказа')
     image = soup.select_one('meta[property="og:image"]')
     date = soup.select_one('meta[property="article:published_time"]')
-    return dict(title=title.get_text(' ', strip=True), text=text, image=urljoin(url, image.get('content', '')) if image else '', published=date.get('content', '') if date else '', source='МК на Чукотке', hashtags=extract_hashtags(soup))
+    return dict(title=title.get_text(' ', strip=True), text=text, image=urljoin(url, image.get('content', '')) if image else '', published=date.get('content', '') if date else '', source='МК на Чукотке', hashtags=extract_hashtags(soup), photo_author=photo_author(soup))
 
 
 class News:
-    def __init__(self, directory, service_provider=None):
+    def __init__(self, directory, service_provider=None, clock=None):
+        self.clock = clock or time.time
         self.service_provider = service_provider
         self.directory = directory
         self.yandex_key = KeyStore(directory)
@@ -190,11 +219,16 @@ class News:
         CREATE TABLE IF NOT EXISTS deliveries(article_id INTEGER,chat_id INTEGER,status TEXT,mid TEXT,created REAL,error TEXT,PRIMARY KEY(article_id,chat_id));
         CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY,created REAL,message TEXT);
         ''')
-        self.db.execute("UPDATE deliveries SET status='unknown',error='Сервис перезапущен во время отправки; проверьте чат перед повтором' WHERE status='sending'")
-        self.db.commit()
+        self.recover_interrupted_sends('Сервис перезапущен во время отправки; проверьте чат перед повтором')
         self.lock = asyncio.Lock()
         self.task = None
-        self.last = 0
+        self.last = self.get('scan', {}).get('time', 0)
+
+    def recover_interrupted_sends(self, message):
+        self.db.execute("UPDATE deliveries SET status='unknown',error=?,created=? WHERE status='sending'", (message,self.clock()))
+        self.db.execute("""UPDATE articles SET status='draft',error='Результат отправки неизвестен. Проверьте историю получателей.'
+            WHERE status='queued' AND NOT EXISTS (SELECT 1 FROM deliveries WHERE article_id=articles.id AND status IN ('queued','sending','sent'))""")
+        self.db.commit()
 
     def get(self, key, default=None):
         row = self.db.execute('SELECT value FROM config WHERE key=?', (key,)).fetchone()
@@ -205,7 +239,9 @@ class News:
         self.db.commit()
 
     def settings(self):
-        return Settings(**self.get('settings', {}))
+        values = dict(self.get('settings', {}))
+        values['interval'] = 15
+        return Settings(**values)
 
     def log(self, text):
         self.db.execute('INSERT INTO logs(created,message) VALUES (?,?)', (time.time(), text))
@@ -388,7 +424,7 @@ class News:
         self.log('Первый запуск: текущие статьи отмечены без публикации' if baseline else 'Источник проверен')
 
     async def process(self):
-        for row in self.db.execute("SELECT * FROM articles WHERE status='new' ORDER BY id LIMIT 10").fetchall():
+        for row in self.db.execute("SELECT * FROM articles WHERE status='new' ORDER BY id LIMIT 1").fetchall():
             if not self.settings().enabled:
                 return
             try:
@@ -413,11 +449,8 @@ class News:
         cfg = self.settings()
         if not cfg.enabled or cfg.paused:
             raise ValueError('Публикация выключена или приостановлена')
-        hour = datetime.now(ZoneInfo(cfg.timezone)).hour
-        if not cfg.start_hour <= hour < cfg.end_hour:
-            raise ValueError('Сейчас вне времени публикации')
         row = self.db.execute('SELECT * FROM articles WHERE id=?', (ident,)).fetchone()
-        if not row or row['status'] not in ('draft', 'published'):
+        if not row or row['status'] not in ('draft', 'queued', 'published'):
             raise ValueError('Новость не готова к публикации')
         data = json.loads(row['data'])
         if not data.get('summary') or not data.get('ai_title'):
@@ -426,55 +459,111 @@ class News:
         targets = [t for t in targets if recipients is None or t['chat_id'] in recipients]
         if not targets:
             raise ValueError('Выберите включённого получателя')
+        added = 0
         for target in targets:
-            if not self.settings().enabled or self.settings().paused:
+            cursor = self.db.execute("INSERT INTO deliveries VALUES (?,?,'queued',NULL,?,NULL) ON CONFLICT(article_id,chat_id) DO UPDATE SET status='queued',created=excluded.created,error=NULL WHERE deliveries.status='cancelled'", (ident, target['chat_id'], self.clock()))
+            added += cursor.rowcount
+        if added and row['status'] != 'published':
+            self.db.execute("UPDATE articles SET status='queued' WHERE id=?", (ident,))
+        self.db.commit()
+        # First post may leave immediately; later posts wait in durable storage.
+        await self.dispatch()
+
+    async def dispatch(self):
+        cfg = self.settings()
+        if not cfg.enabled or cfg.paused:
+            return
+        if self.service_provider is not None:
+            service = self.service_provider()
+            if service is None or not service.ready():
                 return
-            if self.db.execute('SELECT 1 FROM deliveries WHERE article_id=? AND chat_id=?', (ident, target['chat_id'])).fetchone():
+        hour = datetime.fromtimestamp(self.clock(), ZoneInfo(cfg.timezone)).hour
+        if not cfg.start_hour <= hour < cfg.end_hour:
+            return
+        # Consider only the oldest pending post per recipient: FIFO without
+        # sleeping inside requests or letting one blocked chat stall the others.
+        pending = self.db.execute("""SELECT d.* FROM deliveries d
+            JOIN destinations t ON t.chat_id=d.chat_id AND t.enabled=1
+            WHERE d.status='queued' AND NOT EXISTS (
+                SELECT 1 FROM deliveries older WHERE older.chat_id=d.chat_id AND older.status='queued'
+                AND (older.created<d.created OR (older.created=d.created AND older.article_id<d.article_id)))
+            ORDER BY d.created,d.article_id""").fetchall()
+        for delivery in pending:
+            ident, chat_id = delivery['article_id'], delivery['chat_id']
+            last = self.db.execute("SELECT MAX(created) FROM deliveries WHERE chat_id=? AND status IN ('sent','sending','unknown','failed')", (chat_id,)).fetchone()[0]
+            if last is not None and self.clock() < last + 15 * 60:
                 continue
+            limited = False
             for period, limit in ((3600, cfg.hourly), (86400, cfg.daily)):
-                count = self.db.execute("SELECT count(*) FROM deliveries WHERE created>? AND status IN ('sent','sending','unknown')", (time.time() - period,)).fetchone()[0]
+                count = self.db.execute("SELECT count(*) FROM deliveries WHERE created>? AND status IN ('sent','sending','unknown')", (self.clock()-period,)).fetchone()[0]
                 if count >= limit:
-                    raise ValueError('Достигнут лимит публикаций')
-            # Persist intent before network I/O: uncertain sends are never blindly retried.
-            self.db.execute('INSERT INTO deliveries VALUES (?,?,?,NULL,?,NULL)', (ident, target['chat_id'], 'sending', time.time()))
+                    limited = True
+                    break
+            if limited:
+                continue
+            row = self.db.execute('SELECT * FROM articles WHERE id=?', (ident,)).fetchone()
+            if not row or row['status'] in ('rejected', 'error'):
+                self.db.execute("UPDATE deliveries SET status='cancelled' WHERE article_id=? AND chat_id=?", (ident,chat_id))
+                self.db.commit()
+                continue
+            data = json.loads(row['data'])
+            target = self.db.execute('SELECT * FROM destinations WHERE chat_id=?', (chat_id,)).fetchone()
+            self.db.execute("UPDATE deliveries SET status='sending',created=? WHERE article_id=? AND chat_id=?", (self.clock(), ident, chat_id))
             self.db.commit()
+            send_started = False
             try:
                 photo = None
                 if cfg.photos_allowed and target['photos'] and data.get('image'):
+                    if 'photo_author' not in data:
+                        raw = await self.request('GET', original_url(row))
+                        soup = BeautifulSoup(raw, 'html.parser')
+                        data['photo_author'] = photo_author(soup)
+                        image = soup.select_one('meta[property="og:image"]')
+                        if image and image.get('content'):
+                            data['image'] = urljoin(original_url(row), image['content'])
+                        self.db.execute('UPDATE articles SET data=? WHERE id=?', (json.dumps(data), ident))
+                        self.db.commit()
                     photo = await self.request('GET', data['image'])
-                text = format_post(data, original_url(row))
-                result = await self.send(target['chat_id'], text, photo)
+                text = format_post(data, original_url(row), photo_attached=photo is not None)
+                send_started = True
+                result = await self.send(chat_id, text, photo)
                 mid = result.get('id') or result.get('mid')
                 if not mid:
                     raise ValueError('MAX не подтвердил идентификатор сообщения')
-                self.db.execute("UPDATE deliveries SET status='sent',mid=? WHERE article_id=? AND chat_id=?", (mid, ident, target['chat_id']))
-                self.db.execute("UPDATE articles SET status='published' WHERE id=?", (ident,))
+                self.db.execute("UPDATE deliveries SET status='sent',mid=?,created=? WHERE article_id=? AND chat_id=?", (mid,self.clock(),ident,chat_id))
+                self.db.execute("UPDATE articles SET status='published',error=NULL WHERE id=?", (ident,))
             except ApiError as exc:
                 denied = exc.error == 'chat.denied'
                 status = 'failed' if denied else 'unknown'
                 message = 'MAX запретил отправку: проверьте права подключённого аккаунта в этом чате (chat.denied)' if denied else 'MAX не подтвердил отправку; проверьте чат перед повтором'
-                self.db.execute('UPDATE deliveries SET status=?,error=? WHERE article_id=? AND chat_id=?', (status, message, ident, target['chat_id']))
+                self.db.execute('UPDATE deliveries SET status=?,error=?,created=? WHERE article_id=? AND chat_id=?', (status,message,self.clock(),ident,chat_id))
                 self.log(message)
-                emit(self.directory, 'news_send_failed', 'ERROR', exception=exc)
+                emit(self.directory,'news_send_failed','ERROR',exception=exc)
             except Exception as exc:
-                self.db.execute("UPDATE deliveries SET status='unknown',error=? WHERE article_id=? AND chat_id=?", (str(exc), ident, target['chat_id']))
-                self.log('Отправка не подтверждена: ' + str(exc))
+                status = 'unknown' if send_started else 'failed'
+                self.db.execute('UPDATE deliveries SET status=?,error=?,created=? WHERE article_id=? AND chat_id=?', (status,str(exc),self.clock(),ident,chat_id))
+                self.log(('Отправка не подтверждена: ' if send_started else 'Не удалось подготовить пост: ') + str(exc))
+            remaining = self.db.execute("SELECT 1 FROM deliveries WHERE article_id=? AND status IN ('queued','sending')", (ident,)).fetchone()
+            sent = self.db.execute("SELECT 1 FROM deliveries WHERE article_id=? AND status='sent'", (ident,)).fetchone()
+            if not remaining and not sent:
+                self.db.execute("UPDATE articles SET status='draft',error='Отправка не подтверждена. Проверьте историю получателей.' WHERE id=? AND status='queued'", (ident,))
             self.db.commit()
-            await asyncio.sleep(1)
 
     async def tick(self):
         async with self.lock:
             cfg = self.settings()
             if not cfg.enabled:
                 return
-            if time.time() - self.last >= cfg.interval * 60:
+            await self.dispatch()
+            if self.clock() - self.last >= 15 * 60:
                 await self.scan()
-                self.last = time.time()
+                self.last = self.clock()
             await self.process()
             if cfg.automatic and not cfg.paused:
-                for row in self.db.execute("SELECT id,data FROM articles WHERE status IN ('draft','published') ORDER BY id DESC LIMIT 100").fetchall():
+                for row in self.db.execute("SELECT id,data FROM articles WHERE status IN ('draft','published') ORDER BY id LIMIT 100").fetchall():
                     if not json.loads(row['data']).get('manual_only'):
                         await self.publish(row['id'])
+            await self.dispatch()
 
     async def run(self):
         while True:
@@ -492,8 +581,7 @@ class News:
             with contextlib.suppress(asyncio.CancelledError):
                 await self.task
             self.task = None
-        self.db.execute("UPDATE deliveries SET status='unknown',error='Обработка остановлена во время отправки; проверьте чат перед повтором' WHERE status='sending'")
-        self.db.commit()
+        self.recover_interrupted_sends('Обработка остановлена во время отправки; проверьте чат перед повтором')
 
     async def close(self):
         await self.stop()
@@ -644,11 +732,18 @@ def install(gateway=None, *, app=None, provider=None, prefix='/api/admin/news', 
                     raise ValueError('Опубликованную новость нельзя менять')
                 if action == 'refresh-tags':
                     raw = await n.request('GET', original_url(row))
-                    data = dict(json.loads(row['data']), hashtags=extract_hashtags(BeautifulSoup(raw, 'html.parser')))
+                    soup = BeautifulSoup(raw, 'html.parser')
+                    data = dict(json.loads(row['data']), hashtags=extract_hashtags(soup), photo_author=photo_author(soup))
+                    image = soup.select_one('meta[property="og:image"]')
+                    if image and image.get('content'):
+                        data['image'] = urljoin(original_url(row), image['content'])
                     n.db.execute('UPDATE articles SET data=? WHERE id=?', (json.dumps(data), ident))
                 elif action == 'reject':
+                    n.db.execute("UPDATE deliveries SET status='cancelled' WHERE article_id=? AND status='queued'", (ident,))
                     n.db.execute("UPDATE articles SET status='rejected' WHERE id=?", (ident,))
                 else:
+                    if row['status'] == 'queued':
+                        raise ValueError('Новость уже в очереди. Сначала отклоните её или создайте отдельный ручной черновик.')
                     url = original_url(row)
                     previous = json.loads(row['data'])
                     data = article(await n.request('GET', url), url)

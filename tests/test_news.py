@@ -305,7 +305,7 @@ def test_refresh_tags_keeps_ready_summary_without_ai(tmp_path,status):
         response = client.post('/api/news/article/1/refresh-tags',headers=HEADERS)
         assert response.status_code == 200
         data = client.get('/api/news',headers=HEADERS).json()['articles'][0]['data']
-        assert data == dict(original,hashtags=['#Weather'])
+        assert data == dict(original,hashtags=['#Weather'],photo_author='')
         record = client.get('/api/news',headers=HEADERS).json()['articles'][0]
         assert record['status'] == status
         assert client.get('/api/news',headers=HEADERS).json()['deliveries'] == []
