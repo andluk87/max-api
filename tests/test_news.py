@@ -116,3 +116,77 @@ def test_news_uses_editor_transport_parameters(tmp_path):
         assert editor_kwargs == {'chat_id': -79387375605133, 'text': 'Тест', 'notify': True}
         await n.close()
     asyncio.run(run())
+
+
+def test_news_module_grants_isolation_revocation_and_persistence(tmp_path):
+    from fastapi.testclient import TestClient
+    from app.gateway import Gateway
+    from app.main import create_app
+    from test_api import KEY, HEADERS
+    gateway = Gateway(create_app, tmp_path, KEY, run_scheduler=False)
+    with TestClient(gateway) as client:
+        a = client.post('/api/admin/users', headers=HEADERS, json={'name':'Alice'}).json()
+        b = client.post('/api/admin/users', headers=HEADERS, json={'name':'Bob'}).json()
+        uid, bid = a['user']['id'], b['user']['id']
+        ah = {'Authorization':'Bearer '+a['api_key']}
+        bh = {'Authorization':'Bearer '+b['api_key']}
+        assert client.get('/api/whoami', headers=ah).json()['modules']['news'] is False
+        for method, path, body in [('GET','/api/news',None),('POST','/api/news/check',None),('POST','/api/news/import-latest',None),('PUT','/api/news/settings',{'enabled':True})]:
+            assert client.request(method,path,headers=ah,json=body).status_code == 403
+        path = '/api/admin/users/'+uid+'/modules/news'
+        assert client.patch(path,headers=ah,json={'enabled':True}).status_code == 403
+        assert client.patch(path,headers=HEADERS,json={'enabled':True}).status_code == 200
+        assert client.get('/api/whoami',headers=ah).json()['modules']['news'] is True
+        assert client.get('/api/news',headers=ah).status_code == 200
+        assert client.get('/api/news',headers=bh).status_code == 403
+        assert client.get('/api/news',headers={**ah,'X-User-ID':bid}).status_code == 403
+        assert client.put('/api/news/settings',headers=ah,json={'model':'alice-model'}).status_code == 200
+        assert client.get('/api/news',headers=HEADERS).json()['settings']['model'] != 'alice-model'
+        assert client.get('/api/news',headers={**HEADERS,'X-User-ID':uid}).json()['settings']['model'] == 'alice-model'
+        assert gateway.apps[uid][0].state.news.service_provider() is gateway.apps[uid][0].state.service
+        assert client.patch(path,headers=HEADERS,json={'enabled':False}).status_code == 200
+        assert client.get('/api/news',headers=ah).status_code == 403
+        assert client.patch(path,headers=HEADERS,json={'enabled':True}).status_code == 200
+    with TestClient(Gateway(create_app,tmp_path,KEY,run_scheduler=False)) as client:
+        assert client.get('/api/whoami',headers=ah).json()['modules']['news'] is True
+        assert client.get('/api/whoami',headers=bh).json()['modules']['news'] is False
+        assert client.get('/api/news',headers=ah).json()['settings']['model'] == 'alice-model'
+
+
+def test_revoking_news_stops_worker(tmp_path):
+    from fastapi.testclient import TestClient
+    from app.gateway import Gateway
+    from app.main import create_app
+    from test_api import KEY, HEADERS
+    gateway = Gateway(create_app,tmp_path,KEY,run_scheduler=True)
+    with TestClient(gateway) as client:
+        user = client.post('/api/admin/users',headers=HEADERS,json={'name':'Alice'}).json()
+        uid = user['user']['id']
+        assert gateway.apps[uid][0].state.news.task is None
+        path = '/api/admin/users/'+uid+'/modules/news'
+        client.patch(path,headers=HEADERS,json={'enabled':True})
+        task = gateway.apps[uid][0].state.news.task
+        assert task is not None
+        client.patch(path,headers=HEADERS,json={'enabled':False})
+        assert task.done()
+        assert gateway.apps[uid][0].state.news.task is None
+
+
+def test_manual_latest_draft_never_auto_publishes(tmp_path):
+    import time
+    async def run():
+        n = News(tmp_path)
+        n.put('settings',Settings(enabled=True,automatic=True).model_dump())
+        raw = ('<h1>Новости Чукотки</h1><article><p>'+'Ожидается снег и сильный ветер в воскресенье. '*8+'</p></article>').encode()
+        n.request = AsyncMock(side_effect=[b'<a href="/weather/2026/01/01/latest.html">latest</a>',raw])
+        n.generate = AsyncMock(side_effect=lambda data: dict(data, ai_title='Погода',summary='Прогноз погоды'))
+        ident = await n.import_latest()
+        row = n.db.execute('SELECT * FROM articles WHERE id=?',(ident,)).fetchone()
+        assert row['status'] == 'draft'
+        assert json.loads(row['data'])['manual_only'] is True
+        n.last = time.time()
+        n.publish = AsyncMock()
+        await n.tick()
+        n.publish.assert_not_awaited()
+        await n.close()
+    asyncio.run(run())

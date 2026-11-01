@@ -41,6 +41,10 @@ def create_app(service=None, api_key=None, run_scheduler=True, restore_session=T
         app.state.campaigns = Store(s.directory)
         app.state.engine = Engine(s, app.state.campaigns)
         app.state.relays = AutoRelays(s)
+        from .news import News
+        app.state.news = News(s.directory, lambda: s)
+        if run_scheduler and getattr(app.state, 'news_allowed', False):
+            app.state.news.task = asyncio.create_task(app.state.news.run())
         if run_scheduler:
             app.state.engine.start()
             app.state.relays.start()
@@ -51,13 +55,14 @@ def create_app(service=None, api_key=None, run_scheduler=True, restore_session=T
         try:
             yield
         finally:
+            await app.state.news.close()
             await app.state.relays.close()
             await app.state.engine.close()
             app.state.campaigns.db.close()
             await s.stop()
             s.db.close()
 
-    app = FastAPI(title='MAX User Account API', version='1.12.1', lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title='MAX User Account API', version='1.12.2', lifespan=lifespan, docs_url=None, redoc_url=None)
 
     async def auth(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
         if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), key.encode()):
@@ -96,6 +101,8 @@ def create_app(service=None, api_key=None, run_scheduler=True, restore_session=T
         return FileResponse(Path(__file__).parent / 'static' / name)
 
     protected = [Depends(auth)]
+    from .news import install as install_news
+    install_news(app=app, provider=lambda: app.state.news, prefix='/api/news', dependencies=protected)
 
     @app.get('/api/logs', dependencies=protected)
     async def logs(level: Literal['INFO','WARNING','ERROR'] | None = None, before: int = Query(0,ge=0), limit: int = Query(100,ge=1,le=500)):

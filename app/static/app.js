@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let managedUser='admin',scopeEpoch=0,isAdministrator=false;
+let managedUser='admin',scopeEpoch=0,isAdministrator=false,newsAllowed=false;
 let key = '', timer, qrUrl, busy = false, activeTab = 'connect';
 function notice(text) { $('notice').textContent = text; }
 async function api(path, method='GET', body) {
@@ -22,7 +22,7 @@ async function api(path, method='GET', body) {
 const tabNames=new Set(['connect','editor','saved','favorites','queue','events','relays','logs','admin','news']);
 function tabFromAddress(){return location.hash.slice(1)||'connect';}
 function showTab(name,historyMode='push') {
-  if(!tabNames.has(name)||(['admin','news'].includes(name)&&!isAdministrator)){name='connect';historyMode='replace';}
+  if(!tabNames.has(name)||(name==='admin'&&!isAdministrator)||(name==='news'&&!newsAllowed)){name='connect';historyMode='replace';}
   const fragment='#'+name;
   if(location.hash!==fragment){
     const url=new URL(location.href);url.hash=fragment;
@@ -60,11 +60,17 @@ function uiButton(text, handler, className='secondary') {
   return button;
 }
 const labels = {disconnected:'Отключён',connecting:'Подключение…',qr_pending:'Ожидает QR',password_required:'Нужен пароль 2FA',authenticating:'Проверка пароля…',connected:'Аккаунт подключён',reconnecting:'Переподключение…',error:'Ошибка входа'};
+function applyModuleAccess(identity){
+  const allowed=identity.modules?.news===true;
+  if(newsAllowed&&!allowed){NewsUI.reset();if(activeTab==='news')showTab('connect','replace');}
+  newsAllowed=allowed;$('tab-news').hidden=!allowed;
+}
 async function refresh() {
   if (busy) return;
   busy = true;
   try {
     const state = await (await api('status')).json();
+    applyModuleAccess(await (await api('whoami')).json());
     $('status').textContent = labels[state.state] || state.state;
     $('passwordForm').hidden = state.state !== 'password_required';
     $('hint').textContent = state.password_hint || '';
@@ -94,7 +100,7 @@ action('loginform', async () => {
   try {
   clearInterval(timer); key = $('key').value; $('key').value = '';
   const identity=await (await api('whoami')).json();
-  isAdministrator=identity.role==='admin';$('tab-admin').hidden=!isAdministrator;$('tab-news').hidden=!isAdministrator;
+  isAdministrator=identity.role==='admin';$('tab-admin').hidden=!isAdministrator;applyModuleAccess(identity);
   $('accountlabel').textContent=(isAdministrator?'Администратор · ':'Пользователь · ')+identity.user.name;
   await refresh();
   $('loginview').hidden=true; $('workspace').hidden=false; document.body.classList.remove('locked');
@@ -457,7 +463,8 @@ RelayUI.init({api,notice,showTab,loadChats,allChats,uiButton});
 action('logout',()=>location.reload());
 async function manageAccount(uid,name){
   if(!isAdministrator)return;
-  if(!confirm('Открыть аккаунт «'+name+'»? Несохранённые изменения редактора будут сброшены.'))return;
+  if(!confirm('Открыть аккаунт «'+name+'»? Несохранённые изменения редактора и ИИ-парсера будут сброшены.'))return;
+  NewsUI.reset();
   managedUser=uid;scopeEpoch++;logRows=[];logBefore=null;$('logentries').replaceChildren();$('logstatus').textContent='';$('morelogs').hidden=true;
   directory.clear();selectedChats.clear();favorites.clear();savedMessages=[];savedGeneration++;
   inboxRows=[];inboxGeneration++;inboxBefore=null;inboxLive=false;

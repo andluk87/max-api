@@ -39,22 +39,24 @@ class Gateway:
             CREATE TABLE IF NOT EXISTS request_stats(uid TEXT,day TEXT,requests INTEGER,errors INTEGER,PRIMARY KEY(uid,day));
             CREATE TABLE IF NOT EXISTS direct_stats(uid TEXT,kind TEXT,count INTEGER,PRIMARY KEY(uid,kind));
             CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,created REAL,action TEXT,uid TEXT);
+            CREATE TABLE IF NOT EXISTS modules(uid TEXT,module TEXT,enabled INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(uid,module));
             ''');self.db.commit()
             emit(self.root,'server_started')
-            from .news import News
-            self.news = News(self.root, lambda: self.apps['admin'][0].state.service)
-            if self.run_scheduler:self.news.task=asyncio.create_task(self.news.run())
             await self.tenant('admin')
+            self.news = self.apps['admin'][0].state.news
             for row in self.db.execute('SELECT id FROM users WHERE enabled=1').fetchall():await self.tenant(row['id'])
             try:yield
             finally:
                 for uid in list(self.apps):await self.stop(uid)
-                await self.news.close()
                 self.db.close()
         self.control=FastAPI(lifespan=lifespan,docs_url=None,redoc_url=None)
         self.routes()
         from .news import install
         install(self)
+
+    def news_allowed(self, uid):
+        row = self.db.execute("SELECT enabled FROM modules WHERE uid=? AND module='news'", (uid,)).fetchone()
+        return bool(row[0]) if row else uid == 'admin'
 
     def digest(self,key):return hashlib.sha256(key.encode()).hexdigest()
     def lock(self,uid):return self.locks.setdefault(uid,asyncio.Lock())
@@ -70,6 +72,7 @@ class Gateway:
             user=self.user(uid);directory=self.root if uid=='admin' else self.root/'users'/uid
             enabled=bool(user['enabled'])
             app=self.factory(Service(str(directory)),self.internal,run_scheduler=self.run_scheduler and enabled,restore_session=enabled)
+            app.state.news_allowed = self.news_allowed(uid) and enabled
             context=app.router.lifespan_context(app);await context.__aenter__();self.apps[uid]=(app,context)
         return self.apps[uid][0]
     async def stop(self,uid):
@@ -102,6 +105,7 @@ class Gateway:
         row=self.db.execute('SELECT COALESCE(SUM(requests),0),COALESCE(SUM(errors),0) FROM request_stats WHERE uid=?',(uid,)).fetchone()
         stats['api_requests'],stats['api_errors']=row
         stats.update({r[0]:r[1] for r in self.db.execute('SELECT kind,count FROM direct_stats WHERE uid=?',(uid,))})
+        result['modules']={'news': self.news_allowed(uid)}
         result['stats']=stats;return result
 
     def routes(self):
@@ -136,6 +140,20 @@ class Gateway:
                 if body.enabled:await self.tenant(uid)
                 self.record('enable' if body.enabled else 'disable',uid)
             return self.user(uid)
+        @api.patch('/api/admin/users/{uid}/modules/news')
+        async def news_access(uid:str, body:Enabled):
+            async with self.lock(uid):
+                self.user(uid)
+                self.db.execute("INSERT INTO modules VALUES (?,'news',?) ON CONFLICT(uid,module) DO UPDATE SET enabled=excluded.enabled", (uid, int(body.enabled)))
+                self.db.commit()
+                pair = self.apps.get(uid)
+                if pair:
+                    news = pair[0].state.news
+                    await news.stop()
+                    if body.enabled and self.run_scheduler and self.user(uid)['enabled']:
+                        news.task = asyncio.create_task(news.run())
+                self.record('news_enable' if body.enabled else 'news_disable', uid)
+            return {'modules': {'news': body.enabled}}
         @api.delete('/api/admin/users/{uid}')
         async def delete(uid:str):
             if uid=='admin':raise HTTPException(422,'Нельзя удалить администратора')
@@ -187,6 +205,8 @@ class Gateway:
             if uid is None:return await error(401,'Неверный ключ или пользователь заблокирован')
             if path.startswith('/api/admin/'):
                 if not is_admin:return await error(403,'Требуется ключ администратора')
+                if (path == '/api/admin/news' or path.startswith('/api/admin/news/')) and not self.news_allowed('admin'):
+                    return await error(403,'Модуль ИИ-парсера выключен администратором')
                 return await self.control(scope,receive,self.no_cache(send))
             if not is_admin and b'x-user-id' in headers:return await error(403,'Выбор другого пользователя запрещён')
             async with self.lock(uid):
@@ -197,7 +217,9 @@ class Gateway:
                     row=self.db.execute('SELECT key_hash,enabled FROM users WHERE id=?',(uid,)).fetchone()
                     if not row or not row['enabled'] or not hmac.compare_digest(row['key_hash'],self.digest(key)):return await error(401,'Ключ отозван или пользователь заблокирован')
                 if path=='/api/whoami':
-                    return await JSONResponse({'role':'admin' if is_admin else 'user','user':user})(scope,receive,self.no_cache(send))
+                    return await JSONResponse({'role':'admin' if is_admin else 'user','user':user,'modules':{'news':self.news_allowed(uid)}})(scope,receive,self.no_cache(send))
+                if (path == '/api/news' or path.startswith('/api/news/')) and not self.news_allowed(uid):
+                    return await error(403,'Модуль ИИ-парсера не включён администратором')
                 app=await self.tenant(uid)
                 scope['_diagnostics_dir']=app.state.service.directory
                 rewritten=dict(scope);rewritten['headers']=[(k,v) for k,v in scope['headers'] if k.lower() not in (b'authorization',b'x-user-id')]+[(b'authorization',('Bearer '+self.internal).encode())]

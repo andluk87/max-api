@@ -1,4 +1,4 @@
-"""Administrator-only news pipeline using the existing MAX account API transport."""
+"""Isolated news pipeline enabled per account by the service administrator."""
 import asyncio
 import contextlib
 import json
@@ -188,10 +188,8 @@ class News:
             raise ValueError('ИИ вернул пустой или слишком длинный текст; повторите генерацию')
         return dict(data, ai_title=title, summary=summary)
 
-    async def scan(self):
+    async def links(self):
         cfg = self.settings()
-        if not cfg.enabled:
-            raise ValueError('Модуль выключен')
         raw = await self.request('GET', cfg.source)
         soup = BeautifulSoup(raw, 'html.parser')
         origin = urlparse(cfg.source)
@@ -203,10 +201,50 @@ class News:
                 links.append(url)
         if not links:
             raise ValueError('На странице источника не найдены ссылки на статьи')
-        baseline = not self.get('initialized:' + cfg.source, False)
-        for url in links[:100]:
-            self.db.execute('INSERT OR IGNORE INTO articles(url,data,status,created) VALUES (?,?,?,?)', (url, '{}', 'baseline' if baseline else 'new', time.time()))
+        return links[:100]
+
+    async def import_latest(self):
+        if not self.settings().enabled:
+            raise ValueError('Включите модуль в настройках')
+        url = (await self.links())[0]
+        row = self.db.execute('SELECT * FROM articles WHERE url=?', (url,)).fetchone()
+        if row and row['status'] in ('draft', 'published'):
+            if row['status'] == 'draft':
+                data = dict(json.loads(row['data']), manual_only=True)
+                self.db.execute('UPDATE articles SET data=? WHERE id=?', (json.dumps(data), row['id']))
+                self.db.commit()
+            return row['id']
+        # Explicit manual sample never enters automatic publication.
+        data = dict(article(await self.request('GET', url), url), manual_only=True)
+        self.db.execute("INSERT INTO articles(url,data,status,created) VALUES (?,?,'new',?) ON CONFLICT(url) DO UPDATE SET data=excluded.data,status='new',error=NULL", (url, json.dumps(data), time.time()))
         self.db.commit()
+        ident = self.db.execute('SELECT id FROM articles WHERE url=?', (url,)).fetchone()[0]
+        try:
+            data = await self.generate(data)
+            self.db.execute("UPDATE articles SET data=?,status='draft' WHERE id=?", (json.dumps(data), ident))
+        except Exception as exc:
+            self.db.execute("UPDATE articles SET status='error',error=? WHERE id=?", (str(exc), ident))
+            self.db.commit()
+            self.log('Последняя статья загружена, но ИИ-пересказ не готов: ' + str(exc))
+            raise
+        self.db.commit()
+        self.log('Последняя статья загружена как черновик для ручной публикации')
+        return ident
+
+    async def scan(self):
+        cfg = self.settings()
+        if not cfg.enabled:
+            raise ValueError('Модуль выключен')
+        links = await self.links()
+        baseline = not self.get('initialized:' + cfg.source, False)
+        found = 0
+        for url in links[:100]:
+            before = self.db.total_changes
+            self.db.execute('INSERT OR IGNORE INTO articles(url,data,status,created) VALUES (?,?,?,?)', (url, '{}', 'baseline' if baseline else 'new', time.time()))
+            found += self.db.total_changes - before
+        self.db.commit()
+        self.last = time.time()
+        self.put('scan', {'time': self.last, 'found': found, 'baseline': baseline, 'source': cfg.source})
         self.put('initialized:' + cfg.source, True)
         self.log('Первый запуск: текущие статьи отмечены без публикации' if baseline else 'Источник проверен')
 
@@ -216,6 +254,7 @@ class News:
                 return
             try:
                 data = article(await self.request('GET', row['url']), row['url'])
+                data['manual_only'] = json.loads(row['data']).get('manual_only', False)
                 if any(word.casefold() in (data['title'] + data['text']).casefold() for word in self.settings().excluded if word.strip()):
                     status = 'rejected'
                 else:
@@ -290,8 +329,9 @@ class News:
                 self.last = time.time()
             await self.process()
             if cfg.automatic and not cfg.paused:
-                for row in self.db.execute("SELECT id FROM articles WHERE status IN ('draft','published') ORDER BY id DESC LIMIT 100").fetchall():
-                    await self.publish(row['id'])
+                for row in self.db.execute("SELECT id,data FROM articles WHERE status IN ('draft','published') ORDER BY id DESC LIMIT 100").fetchall():
+                    if not json.loads(row['data']).get('manual_only'):
+                        await self.publish(row['id'])
 
     async def run(self):
         while True:
@@ -303,24 +343,30 @@ class News:
                 self.log(str(exc))
             await asyncio.sleep(30)
 
-    async def close(self):
+    async def stop(self):
         if self.task:
             self.task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self.task
+            self.task = None
+        self.db.execute("UPDATE deliveries SET status='unknown',error='Обработка остановлена во время отправки; проверьте чат перед повтором' WHERE status='sending'")
+        self.db.commit()
+
+    async def close(self):
+        await self.stop()
         self.db.close()
 
 
-def install(gateway):
-    router = APIRouter(prefix='/api/admin/news')
+def install(gateway=None, *, app=None, provider=None, prefix='/api/admin/news', dependencies=None):
+    router = APIRouter(prefix=prefix, dependencies=dependencies or [])
 
     def module():
-        return gateway.news
+        return provider() if provider is not None else gateway.news
 
     @router.get('')
     async def state():
         n = module()
-        return {'settings': n.settings().model_dump(), 'destinations': [dict(r, chat_id=str(r['chat_id'])) for r in n.db.execute('SELECT * FROM destinations')], 'articles': [dict(r, data=json.loads(r['data'])) for r in n.db.execute("SELECT * FROM articles WHERE status!='baseline' ORDER BY id DESC LIMIT 200")], 'deliveries': [dict(r, chat_id=str(r['chat_id'])) for r in n.db.execute('SELECT * FROM deliveries ORDER BY created DESC LIMIT 500')], 'logs': [dict(r) for r in n.db.execute('SELECT * FROM logs ORDER BY id DESC LIMIT 100')]}
+        return {'scan': n.get('scan'), 'settings': n.settings().model_dump(), 'destinations': [dict(r, chat_id=str(r['chat_id'])) for r in n.db.execute('SELECT * FROM destinations')], 'articles': [dict(r, data=json.loads(r['data'])) for r in n.db.execute("SELECT * FROM articles WHERE status!='baseline' ORDER BY id DESC LIMIT 200")], 'deliveries': [dict(r, chat_id=str(r['chat_id'])) for r in n.db.execute('SELECT * FROM deliveries ORDER BY created DESC LIMIT 500')], 'logs': [dict(r) for r in n.db.execute('SELECT * FROM logs ORDER BY id DESC LIMIT 100')]}
 
     @router.put('/settings')
     async def settings(value: Settings):
@@ -347,6 +393,14 @@ def install(gateway):
             await module().scan()
             await module().process()
             return {'ok': True}
+        return await guarded(work)
+
+    @router.post('/import-latest')
+    async def import_latest():
+        async def work():
+            ident = await module().import_latest()
+            status = module().db.execute('SELECT status FROM articles WHERE id=?', (ident,)).fetchone()[0]
+            return {'id': ident, 'status': status}
         return await guarded(work)
 
     @router.post('/connection')
@@ -407,6 +461,7 @@ def install(gateway):
                     n.db.execute("UPDATE articles SET status='rejected' WHERE id=?", (ident,))
                 else:
                     data = article(await n.request('GET', row['url']), row['url'])
+                    data['manual_only'] = json.loads(row['data']).get('manual_only', False)
                     data = await n.generate(data)
                     n.db.execute("UPDATE articles SET data=?,status='draft',error=NULL WHERE id=?", (json.dumps(data), ident))
                 n.db.commit()
@@ -415,4 +470,4 @@ def install(gateway):
             return {'ok': True}
         return await guarded(work)
 
-    gateway.control.include_router(router)
+    (app if app is not None else gateway.control).include_router(router)
