@@ -92,8 +92,9 @@ def test_denied_test_send_has_actionable_error(tmp_path):
     from test_api import KEY, HEADERS
     gateway = Gateway(create_app, tmp_path, KEY, run_scheduler=False)
     with TestClient(gateway) as client:
-        gateway.news.db.execute("INSERT INTO destinations VALUES (123, 'Канал', 1, 0)")
-        gateway.news.db.commit()
+        import sqlite3
+        with sqlite3.connect(tmp_path / 'news.sqlite') as db:
+            db.execute("INSERT INTO destinations VALUES (123, 'Канал', 1, 0)")
         gateway.news.send = AsyncMock(side_effect=ApiError(opcode=64, error='chat.denied'))
         response = client.post('/api/admin/news/destination/123/test', headers=HEADERS)
         assert response.status_code == 403
