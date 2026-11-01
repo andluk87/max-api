@@ -287,7 +287,8 @@ def test_hashtags_extracted_with_article():
     assert article(raw,'https://example.org/news.html')['hashtags'] == ['#Погода','#Чукотка']
 
 
-def test_refresh_tags_keeps_ready_summary_without_ai(tmp_path):
+@pytest.mark.parametrize('status', ['draft', 'published'])
+def test_refresh_tags_keeps_ready_summary_without_ai(tmp_path,status):
     import sqlite3
     from fastapi.testclient import TestClient
     from app.gateway import Gateway
@@ -298,11 +299,16 @@ def test_refresh_tags_keeps_ready_summary_without_ai(tmp_path):
         client.put('/api/news/settings',headers=HEADERS,json={'enabled':True})
         original = {'title':'Оригинал','ai_title':'Заголовок ИИ','summary':'Готовый пересказ','manual_only':True,'source':'МК на Чукотке'}
         with sqlite3.connect(tmp_path/'news.sqlite') as db:
-            db.execute("INSERT INTO articles VALUES (1,'https://example.org/article.html',?,'draft',0,NULL)",(json.dumps(original),))
+            db.execute("INSERT INTO articles VALUES (1,'https://example.org/article.html',?,?,0,NULL)",(json.dumps(original),status))
         gateway.news.request = AsyncMock(return_value=b'<meta name="keywords" content="Weather">')
         gateway.news.generate = AsyncMock(side_effect=AssertionError('AI must not run'))
         response = client.post('/api/news/article/1/refresh-tags',headers=HEADERS)
         assert response.status_code == 200
         data = client.get('/api/news',headers=HEADERS).json()['articles'][0]['data']
         assert data == dict(original,hashtags=['#Weather'])
+        record = client.get('/api/news',headers=HEADERS).json()['articles'][0]
+        assert record['status'] == status
+        assert client.get('/api/news',headers=HEADERS).json()['deliveries'] == []
+        if status == 'published':
+            assert client.post('/api/news/article/1/regenerate',headers=HEADERS).status_code == 422
         gateway.news.generate.assert_not_awaited()

@@ -551,7 +551,7 @@ def install(gateway=None, *, app=None, provider=None, prefix='/api/admin/news', 
             if action == 'publish':
                 await n.publish(ident, recipients)
             elif action in ('regenerate', 'reject', 'refresh-tags'):
-                if row['status'] == 'published':
+                if row['status'] == 'published' and action != 'refresh-tags':
                     raise ValueError('Опубликованную новость нельзя менять')
                 if action == 'refresh-tags':
                     raw = await n.request('GET', row['url'])
