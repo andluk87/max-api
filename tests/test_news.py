@@ -259,3 +259,50 @@ def test_ai_rejects_incomplete_or_invalid_output(result,reason):
     from app.news import validate_summary
     with pytest.raises(ValueError,match=reason):
         validate_summary(result,Settings(),'Погода')
+
+
+def test_source_hashtags_and_clickable_source_in_max():
+    from app.news import extract_hashtags, format_post
+    from bs4 import BeautifulSoup
+    from pymax.formatting.markdown import Formatter
+    soup = BeautifulSoup('<meta name="keywords" content="Новости, Погода, Прогноз погоды"><meta property="article:tag" content="Погода"><a class="article__tag-item">#Прогноз погоды</a>', 'html.parser')
+    tags = extract_hashtags(soup)
+    assert tags == ['#Новости', '#Погода', '#Прогнозпогоды']
+    url = 'https://www.mk-chukotka.ru/social/2026/11/01/news.html'
+    data = {'ai_title':'Погода на Чукотке','summary':'В воскресенье ожидается снег.','source':'МК на Чукотке','hashtags':tags}
+    text = format_post(data,url)
+    assert text.endswith('#Новости #Погода #Прогнозпогоды')
+    plain, entities = Formatter.format_markdown(text)
+    links = [e for e in entities if e.type == 'LINK']
+    assert len(links) == 1
+    assert links[0].attributes.url == url
+    label = plain.encode('utf-16-le')[links[0].from_*2:(links[0].from_+links[0].length)*2].decode('utf-16-le')
+    assert label == 'МК на Чукотке'
+    assert url not in plain
+
+
+def test_hashtags_extracted_with_article():
+    text = 'В воскресенье на Чукотке ожидается снег. ' * 8
+    raw = '<h1>Погода</h1><meta name="keywords" content="Погода, Чукотка"><article><p>'+text+'</p></article><a class="article__tag-item">Чукотка</a>'
+    assert article(raw,'https://example.org/news.html')['hashtags'] == ['#Погода','#Чукотка']
+
+
+def test_refresh_tags_keeps_ready_summary_without_ai(tmp_path):
+    import sqlite3
+    from fastapi.testclient import TestClient
+    from app.gateway import Gateway
+    from app.main import create_app
+    from test_api import KEY, HEADERS
+    gateway = Gateway(create_app,tmp_path,KEY,run_scheduler=False)
+    with TestClient(gateway) as client:
+        client.put('/api/news/settings',headers=HEADERS,json={'enabled':True})
+        original = {'title':'Оригинал','ai_title':'Заголовок ИИ','summary':'Готовый пересказ','manual_only':True,'source':'МК на Чукотке'}
+        with sqlite3.connect(tmp_path/'news.sqlite') as db:
+            db.execute("INSERT INTO articles VALUES (1,'https://example.org/article.html',?,'draft',0,NULL)",(json.dumps(original),))
+        gateway.news.request = AsyncMock(return_value=b'<meta name="keywords" content="Weather">')
+        gateway.news.generate = AsyncMock(side_effect=AssertionError('AI must not run'))
+        response = client.post('/api/news/article/1/refresh-tags',headers=HEADERS)
+        assert response.status_code == 200
+        data = client.get('/api/news',headers=HEADERS).json()['articles'][0]['data']
+        assert data == dict(original,hashtags=['#Weather'])
+        gateway.news.generate.assert_not_awaited()

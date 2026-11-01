@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import time
 from urllib.parse import urljoin, urlparse
@@ -110,6 +111,36 @@ class Edit(BaseModel):
     recipients: list[int] = Field(default_factory=list)
 
 
+def extract_hashtags(soup):
+    topics = []
+    for meta in soup.select('meta[name="keywords"], meta[property="article:section"], meta[property="article:tag"]'):
+        topics.extend(re.split(r'[,;]', meta.get('content', '')))
+    for tag in soup.select('.article__tag-item, .article__tags a, a[rel~="tag"], [itemprop="keywords"]'):
+        topics.append(tag.get('content') or tag.get_text(' ', strip=True))
+    output, seen = [], set()
+    for topic in topics:
+        # Join words into one hashtag; omit Markdown markers and punctuation.
+        label = ''.join(ch for ch in topic if ch.isalnum())[:60]
+        if label and label.casefold() not in seen:
+            output.append('#' + label)
+            seen.add(label.casefold())
+        if len(output) == 10:
+            break
+    return output
+
+
+def format_post(data, url):
+    source = data.get('source') or 'МК на Чукотке'
+    source = source.replace('[', '').replace(']', '')
+    url = url.replace('(', '%28').replace(')', '%29')
+    text = '**' + data['ai_title'] + '**\n\n' + data['summary']
+    text += '\n\n🔗 Источник: [' + source + '](' + url + ')'
+    tags = data.get('hashtags', [])
+    if tags:
+        text += '\n\n' + ' '.join(tags)
+    return text
+
+
 def article(raw, url):
     soup = BeautifulSoup(raw, 'html.parser')
     title = soup.select_one('h1')
@@ -124,7 +155,7 @@ def article(raw, url):
         raise ValueError('Недостаточно текста для пересказа')
     image = soup.select_one('meta[property="og:image"]')
     date = soup.select_one('meta[property="article:published_time"]')
-    return dict(title=title.get_text(' ', strip=True), text=text, image=urljoin(url, image.get('content', '')) if image else '', published=date.get('content', '') if date else '', source='МК на Чукотке')
+    return dict(title=title.get_text(' ', strip=True), text=text, image=urljoin(url, image.get('content', '')) if image else '', published=date.get('content', '') if date else '', source='МК на Чукотке', hashtags=extract_hashtags(soup))
 
 
 class News:
@@ -364,7 +395,7 @@ class News:
                 photo = None
                 if cfg.photos_allowed and target['photos'] and data.get('image'):
                     photo = await self.request('GET', data['image'])
-                text = '**' + data['ai_title'] + '**\n\n' + data['summary'] + '\n\n🔗 Источник: ' + data['source'] + '\n' + row['url']
+                text = format_post(data, row['url'])
                 result = await self.send(target['chat_id'], text, photo)
                 mid = result.get('id') or result.get('mid')
                 if not mid:
@@ -519,10 +550,14 @@ def install(gateway=None, *, app=None, provider=None, prefix='/api/admin/news', 
                 raise ValueError('Модуль выключен')
             if action == 'publish':
                 await n.publish(ident, recipients)
-            elif action in ('regenerate', 'reject'):
+            elif action in ('regenerate', 'reject', 'refresh-tags'):
                 if row['status'] == 'published':
                     raise ValueError('Опубликованную новость нельзя менять')
-                if action == 'reject':
+                if action == 'refresh-tags':
+                    raw = await n.request('GET', row['url'])
+                    data = dict(json.loads(row['data']), hashtags=extract_hashtags(BeautifulSoup(raw, 'html.parser')))
+                    n.db.execute('UPDATE articles SET data=? WHERE id=?', (json.dumps(data), ident))
+                elif action == 'reject':
                     n.db.execute("UPDATE articles SET status='rejected' WHERE id=?", (ident,))
                 else:
                     data = article(await n.request('GET', row['url']), row['url'])
