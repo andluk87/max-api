@@ -36,10 +36,17 @@ compose=(docker compose -f compose.yaml -f compose.news.yaml)
 "${compose[@]}" config --quiet
 "${compose[@]}" up -d --build --force-recreate
 echo 'Загрузка локальной модели Qwen для ИИ-парсера (первый запуск может занять несколько минут)...'
-"${compose[@]}" exec -T ollama ollama pull qwen2.5:3b
+model_ready=true
+if ! bash scripts/pull-news-model.sh; then
+  model_ready=false
+  echo 'Обновление сервиса продолжается. ИИ-пересказ недоступен до загрузки модели.' >&2
+fi
 for attempt in {1..30}; do
   if "${compose[@]}" exec -T max-api python -c "import urllib.request; import json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8087/healthz', timeout=3)) == {'ok': True}" 2>/dev/null; then
     echo 'MAX API updated; healthz OK. Refresh the browser with Ctrl+F5.'
+    if [[ "$model_ready" != true ]]; then
+      echo 'ВНИМАНИЕ: модель ИИ не загружена. Повторите: bash scripts/pull-news-model.sh' >&2
+    fi
     exit 0
   fi
   sleep 2
