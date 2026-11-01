@@ -221,3 +221,41 @@ def test_ollama_http_failure_is_explained(tmp_path):
             await n.close()
             await runner.cleanup()
     asyncio.run(run())
+
+
+def test_ai_corrects_overlong_summary_without_truncating(tmp_path):
+    async def run():
+        n = News(tmp_path)
+        text = 'В воскресенье на Чукотке ожидается снег. ' * 8
+        n.request = AsyncMock(side_effect=[{'response':json.dumps({'title':'Погода','summary':'а'*650})}, {'response':json.dumps({'title':'Погода','summary':text})}])
+        data = await n.generate({'title':'Погода на Чукотке','text':text})
+        assert data['summary'] == text.strip()
+        assert n.request.await_count == 2
+        second_prompt = n.request.call_args.kwargs['json']['prompt']
+        assert '650' in second_prompt and '600' in second_prompt
+        assert n.request.call_args.kwargs['json']['format']['required'] == ['title','summary']
+        await n.close()
+    asyncio.run(run())
+
+
+def test_ai_invalid_second_result_has_precise_error(tmp_path):
+    async def run():
+        n = News(tmp_path)
+        n.request = AsyncMock(return_value={'response':json.dumps({'title':'Погода','summary':'а'*650})})
+        with pytest.raises(ValueError, match='650 символов, максимум 600'):
+            await n.generate({'title':'Погода','text':'Будет снег'})
+        assert n.request.await_count == 2
+        await n.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('result,reason', [
+    ({'response':'{"title":"Погода","summary":null}'},'пустой пересказ'),
+    ({'response':'[]'},'неверного формата'),
+    ({'response':'{"title":'},'некорректный JSON'),
+    ({'response':'{}','done_reason':'length'},'лимиту токенов'),
+])
+def test_ai_rejects_incomplete_or_invalid_output(result,reason):
+    from app.news import validate_summary
+    with pytest.raises(ValueError,match=reason):
+        validate_summary(result,Settings(),'Погода')
