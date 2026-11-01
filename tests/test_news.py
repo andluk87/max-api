@@ -190,3 +190,34 @@ def test_manual_latest_draft_never_auto_publishes(tmp_path):
         n.publish.assert_not_awaited()
         await n.close()
     asyncio.run(run())
+
+
+def test_ollama_error_reason_and_memory_hint():
+    from app.news import ollama_failure
+    error = ollama_failure(500, 'model requires more system memory (4.0 GiB) than is available (1.0 GiB)')
+    assert 'Ollama' in error and 'HTTP 500' in error
+    assert '4.0 GiB' in error and 'Не хватает памяти' in error
+    assert 'ollama list' in ollama_failure(404, 'model not found')
+
+
+def test_ollama_http_failure_is_explained(tmp_path):
+    from aiohttp import web
+    async def run():
+        async def generate(request):
+            return web.json_response({'error':'model requires more system memory'},status=500)
+        app = web.Application()
+        app.router.add_post('/api/generate',generate)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner,'127.0.0.1',0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        n = News(tmp_path)
+        n.put('settings',Settings(ollama=f'http://127.0.0.1:{port}').model_dump())
+        try:
+            with pytest.raises(ValueError,match='Ollama.*Не хватает памяти'):
+                await n.generate({'title':'Погода','text':'Будет снег'})
+        finally:
+            await n.close()
+            await runner.cleanup()
+    asyncio.run(run())

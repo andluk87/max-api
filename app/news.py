@@ -18,6 +18,16 @@ from .diagnostics import emit
 from .delivery import send_message
 
 
+def ollama_failure(status, detail):
+    reason = ' '.join(detail.split())[:600] if isinstance(detail, str) else ''
+    hint = ''
+    if any(word in reason.lower() for word in ('memory', 'out of ram', 'allocate')):
+        hint = ' Не хватает памяти: освободите RAM или выберите меньшую модель.'
+    elif 'not found' in reason.lower() and 'model' in reason.lower():
+        hint = ' Проверьте название модели и её наличие в ollama list.'
+    return f'Ollama вернул HTTP {status}' + (': ' + reason if reason else '') + hint
+
+
 class Settings(BaseModel):
     enabled: bool = False
     paused: bool = False
@@ -130,7 +140,19 @@ class News:
         async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=180)) as session:
             async with session.request(method, url, headers=headers, **kwargs) as response:
                 if response.status >= 400:
-                    raise ValueError(f'Удалённый сервис вернул HTTP {response.status}')
+                    cfg = self.settings()
+                    if url in (cfg.ollama + '/api/generate', cfg.ollama + '/api/tags'):
+                        raw = bytearray()
+                        async for chunk in response.content.iter_chunked(4096):
+                            raw.extend(chunk)
+                            if len(raw) > 16384:
+                                break
+                        try:
+                            detail = json.loads(raw).get('error', '')
+                        except (ValueError, AttributeError, UnicodeDecodeError):
+                            detail = ''
+                        raise ValueError(ollama_failure(response.status, detail))
+                    raise ValueError(f'Источник или изображение вернули HTTP {response.status}')
                 if response.content_type == 'application/json':
                     return await response.json()
                 data = bytearray()
@@ -181,7 +203,13 @@ class News:
                   'Не добавляй факты, сохрани числа, даты, имена и географию. Верни JSON с title и summary. '
                   f'Пересказ 400–{cfg.length} символов. Заголовок до 150 символов.\nСтатья:\n' + data['title'] + '\n' + data['text'][:30000])
         result = await self.request('POST', cfg.ollama + '/api/generate', json={'model': cfg.model, 'prompt': prompt, 'stream': False, 'format': 'json', 'options': {'temperature': 0.1}})
+        if result.get('error'):
+            raise ValueError(ollama_failure(200, result['error']))
+        if not isinstance(result.get('response'), str):
+            raise ValueError('Ollama не вернул текст пересказа. Проверьте журнал Ollama.')
         output = json.loads(result['response'])
+        if not isinstance(output, dict):
+            raise ValueError('Ollama вернул неверный формат пересказа')
         summary = output.get('summary', '').strip()
         title = output.get('title', '').strip() if cfg.rewrite_title else data['title']
         if not title or len(title) > 300 or not 100 <= len(summary) <= cfg.length:
