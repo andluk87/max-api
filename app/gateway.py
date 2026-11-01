@@ -41,14 +41,20 @@ class Gateway:
             CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,created REAL,action TEXT,uid TEXT);
             ''');self.db.commit()
             emit(self.root,'server_started')
+            from .news import News
+            self.news = News(self.root, lambda: self.apps['admin'][0].state.service)
+            if self.run_scheduler:self.news.task=asyncio.create_task(self.news.run())
             await self.tenant('admin')
             for row in self.db.execute('SELECT id FROM users WHERE enabled=1').fetchall():await self.tenant(row['id'])
             try:yield
             finally:
                 for uid in list(self.apps):await self.stop(uid)
+                await self.news.close()
                 self.db.close()
         self.control=FastAPI(lifespan=lifespan,docs_url=None,redoc_url=None)
         self.routes()
+        from .news import install
+        install(self)
 
     def digest(self,key):return hashlib.sha256(key.encode()).hexdigest()
     def lock(self,uid):return self.locks.setdefault(uid,asyncio.Lock())

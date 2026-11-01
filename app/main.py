@@ -91,7 +91,7 @@ def create_app(service=None, api_key=None, run_scheduler=True, restore_session=T
 
     @app.get('/ui/{name}', include_in_schema=False)
     async def assets(name: str):
-        if name not in {'app.js', 'style.css', 'schedule.js', 'rich.js', 'relays.js', 'admin.js', 'theme.js', 'bootstrap.min.css'}:
+        if name not in {'app.js', 'style.css', 'schedule.js', 'rich.js', 'relays.js', 'admin.js', 'news.js', 'theme.js', 'bootstrap.min.css'}:
             raise HTTPException(404)
         return FileResponse(Path(__file__).parent / 'static' / name)
 

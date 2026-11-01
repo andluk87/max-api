@@ -1,0 +1,10 @@
+# docker compose -f compose.yaml -f compose.news.yaml up -d --build
+services:
+  ollama:
+    image: ollama/ollama:0.11.4
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    # Ollama is accessible only in the internal compose network.
+volumes:
+  ollama-data:

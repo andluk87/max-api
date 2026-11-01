@@ -19,10 +19,10 @@ async function api(path, method='GET', body) {
   }
   return response;
 }
-const tabNames=new Set(['connect','editor','saved','favorites','queue','events','relays','logs','admin']);
+const tabNames=new Set(['connect','editor','saved','favorites','queue','events','relays','logs','admin','news']);
 function tabFromAddress(){return location.hash.slice(1)||'connect';}
 function showTab(name,historyMode='push') {
-  if(!tabNames.has(name)||(name==='admin'&&!isAdministrator)){name='connect';historyMode='replace';}
+  if(!tabNames.has(name)||(['admin','news'].includes(name)&&!isAdministrator)){name='connect';historyMode='replace';}
   const fragment='#'+name;
   if(location.hash!==fragment){
     const url=new URL(location.href);url.hash=fragment;
@@ -35,7 +35,7 @@ function showTab(name,historyMode='push') {
     $('panel-'+button.dataset.tab).hidden=!selected;
   });
   if(key) {
-    const loader={saved:loadSaved,favorites:loadFavorites,queue:loadRuns,logs:()=>loadLogs(),events:loadInbox,relays:()=>RelayUI.load(),admin:()=>AdminUI.load()}[name];
+    const loader={saved:loadSaved,favorites:loadFavorites,queue:loadRuns,logs:()=>loadLogs(),events:loadInbox,relays:()=>RelayUI.load(),news:()=>NewsUI.load(),admin:()=>AdminUI.load()}[name];
     if(loader) loader().catch(e=>notice(e.message));
   }
 }
@@ -94,7 +94,7 @@ action('loginform', async () => {
   try {
   clearInterval(timer); key = $('key').value; $('key').value = '';
   const identity=await (await api('whoami')).json();
-  isAdministrator=identity.role==='admin';$('tab-admin').hidden=!isAdministrator;
+  isAdministrator=identity.role==='admin';$('tab-admin').hidden=!isAdministrator;$('tab-news').hidden=!isAdministrator;
   $('accountlabel').textContent=(isAdministrator?'Администратор · ':'Пользователь · ')+identity.user.name;
   await refresh();
   $('loginview').hidden=true; $('workspace').hidden=false; document.body.classList.remove('locked');
@@ -483,3 +483,5 @@ async function loadLogs(append=false){
 action('refreshlogs',()=>loadLogs());action('morelogs',()=>loadLogs(true));
 $('loglevel').onchange=()=>loadLogs().catch(e=>notice(e.message));
 $('exportlogs').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(logRows,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='max-logs-'+managedUser+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+
+NewsUI.init({api,notice,uiButton});
